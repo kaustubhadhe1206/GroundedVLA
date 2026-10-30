@@ -1,0 +1,19 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "groundedvla"
+version = "0.1.0"
+description = "GroundedVLA: language-grounded 3D inputs for SmolVLA on LIBERO (CSCI 645)"
+requires-python = ">=3.10"
+# Dependencies are pinned in requirements.txt / requirements-openvla.txt (two environments).
+
+[tool.setuptools.packages.find]
+include = ["groundedvla*"]
+
+[tool.setuptools.package-data]
+groundedvla = ["**/*.json"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

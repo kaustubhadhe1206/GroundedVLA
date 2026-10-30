@@ -1,0 +1,30 @@
+# OpenVLA-7B pipeline check only (plan Step A3). Separate environment / Colab runtime:
+# these pins conflict with LeRobot's transformers version (plan Section 2.3).
+# Versions from openvla/openvla's requirements for the LIBERO checkpoints.
+transformers==4.40.1
+tokenizers==0.19.1
+timm==0.9.10
+accelerate>=0.25.0
+bitsandbytes          # only needed for --load-in-4bit / --load-in-8bit on small GPUs
+sentencepiece
+pillow
+# numpy: keep the runtime's version (robosuite's NumPy 2 issue is patched in groundedvla/envs/compat.py).
+# If OpenVLA's remote code fails on NumPy 2, install "numpy<2" and restart the runtime.
+
+# LIBERO stack (same pins as requirements.txt, minus LeRobot)
+hf-libero==0.1.4
+robosuite==1.4.0
+mujoco==3.3.2
+bddl==1.0.1
+robomimic==0.2.0
+gymnasium==1.4.0
+easydict==1.13
+hydra-core==1.3.7
+future==1.0.0
+cloudpickle==3.1.2
+scipy
+h5py
+PyYAML
+imageio
+imageio-ffmpeg
+huggingface-hub

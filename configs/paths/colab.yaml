@@ -1,0 +1,17 @@
+# Colab profile (plan Section 2.6).
+# Persistent files live on Google Drive; training/eval read fast copies on the Colab local disk,
+# made by the notebooks at session start. Checkpoints and results are written back to Drive.
+root: /content/drive/MyDrive/groundedvla
+
+models: models
+smolvla_base: models/smolvla_base
+datasets: datasets
+libero_raw: datasets/libero
+replayed: datasets/replayed
+lerobot_datasets: datasets/lerobot
+checkpoints: checkpoints
+outputs: outputs
+cache: /content/local/cache            # HF / torch caches: local disk, not Drive
+
+local_models: /content/local/models
+local_datasets: /content/local/datasets

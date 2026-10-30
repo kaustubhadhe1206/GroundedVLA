@@ -1,0 +1,18 @@
+# OOD evaluation conditions (plan Section 6). Tier 1 = 50 rollouts/task, Tier 2 = 25.
+# Position/scene init states come from split_manifest["ood"] (make_ood_states.py).
+conditions:
+  pos_small:   {tier: 2, rollouts: 25, init_states: pos_small}
+  pos_large:   {tier: 1, rollouts: 50, init_states: pos_large}
+  layout_swap: {tier: 2, rollouts: 25, init_states: layout_swap, tasks: [T1, T2]}
+  distractor:  {tier: 2, rollouts: 25, init_states: distractor}
+  yaw_p10:     {tier: 2, rollouts: 25, camera: {yaw_deg: 10}}
+  yaw_p20:     {tier: 1, rollouts: 50, camera: {yaw_deg: 20}}
+  yaw_m20:     {tier: 1, rollouts: 50, camera: {yaw_deg: -20}}
+  height_p10:  {tier: 2, rollouts: 25, camera: {height_m: 0.10}}
+  fov_p10:     {tier: 2, rollouts: 25, camera: {fov_scale: 1.10}}
+  paraphrase:  {tier: 2, rollouts: 25, paraphrases: groundedvla/ood/paraphrases.json}
+
+# B5 ablations (V3 checkpoint only; ID, pos_large, yaw +/-20)
+ablations:
+  noisy_grounding_cm: [1, 3, 5]
+  gt_grounding: true

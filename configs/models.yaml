@@ -1,0 +1,33 @@
+# Models that scripts/run_sim.py and the eval harness can load by name (plan Section 2.2.1).
+# Weights are looked up in paths.local_models/<folder>, then paths.models/<folder>, and are
+# downloaded from the Hub into paths.models/<folder> if missing.
+
+replay:
+  type: replay                       # expert demo actions from the LIBERO hdf5 (A2 check)
+
+smolvla_base:
+  type: smolvla
+  hub_id: lerobot/smolvla_base
+  folder: smolvla_base
+  zero_shot_base: true               # 3 cams / 6-D state / 6-D action -> plumbing test only (A3)
+  horizon: 10
+
+smolvla_libero:
+  type: smolvla
+  hub_id: HuggingFaceVLA/smolvla_libero
+  folder: smolvla_libero
+  horizon: 1                         # its config has n_action_steps=1 (re-plan every step), as lerobot-eval runs it
+
+smolvla_ckpt:
+  type: smolvla                      # our fine-tuned V1/V2/V3 checkpoints: pass --checkpoint <dir>
+  requires_checkpoint: true
+  horizon: 10
+
+openvla_7b:
+  type: openvla                      # needs its own env (requirements-openvla.txt) and ~16 GB GPU
+  hub_id_per_suite:
+    libero_spatial: openvla/openvla-7b-finetuned-libero-spatial
+    libero_object: openvla/openvla-7b-finetuned-libero-object
+    libero_goal: openvla/openvla-7b-finetuned-libero-goal
+    libero_10: openvla/openvla-7b-finetuned-libero-10
+  horizon: 1                         # OpenVLA predicts one action per call

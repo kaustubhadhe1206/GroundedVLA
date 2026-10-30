@@ -1,0 +1,11 @@
+{
+  "_note": "Language OOD (Section 6.4). 3 paraphrases per task, written before any evaluation, never used in training.",
+  "T1": [
+    "grab the black bowl sitting between the plate and the ramekin and put it onto the plate",
+    "TODO",
+    "TODO"
+  ],
+  "T2": ["TODO", "TODO", "TODO"],
+  "T3": ["TODO", "TODO", "TODO"],
+  "T4": ["TODO", "TODO", "TODO"]
+}

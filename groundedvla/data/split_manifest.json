@@ -1,0 +1,10 @@
+{
+  "split_seed": null,
+  "demos": {},
+  "val_rollout_seed": 1000,
+  "val_rollouts_per_task": 10,
+  "test_seed": 2000,
+  "test_in_distribution": "libero_fixed_init_states",
+  "ood": {},
+  "note": "Filled by make_split_manifest.py (A5) and ood/make_ood_states.py (Week 3). Do not edit by hand."
+}

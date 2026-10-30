@@ -1,0 +1,43 @@
+# V3: RGB + mask + 3D grounding tokens. Identical to v2 except `model`.
+name: v3_grounded
+tasks: [T1, T2, T3]
+
+data:
+  repo_id: local/gvla_libero
+  manifest: groundedvla/data/split_manifest.json
+
+model:
+  variant: v3
+  image_keys: [observation.images.image, observation.images.image2, observation.images.mask]
+  use_grounding: true
+  grounding:
+    num_tokens: 2              # K; try 4 if V3 ignores the adapter
+    fourier_freqs: 8
+    mlp_width: 512
+    adapter_lr: 1.0e-4         # lower to 5e-5 if unstable
+    injection: tokens          # tokens | state_concat (fallback 1) | expert_add (fallback 2)
+  freeze_vision_encoder: true
+  train_expert_only: true
+  chunk_size: 50
+
+train:
+  seed: 0
+  steps: 20000
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 1.0e-10
+  warmup_steps: 1000
+  scheduler: cosine
+  precision: bf16
+  checkpoint_every: 2000
+  select_from_steps: [10000, 15000, 20000]
+
+eval:
+  mode: naive                  # naive | temporal_ensemble (compared in B1, then fixed)
+  execution_horizon: 10
+  te_m: 0.01
+  rollouts_per_task: 50
+  seed: 2000
+
+logging:
+  wandb_project: groundedvla

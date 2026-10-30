@@ -1,0 +1,18 @@
+# Laptop profile: every path the project uses (plan Section 2.5). Nothing goes to C:.
+# Override the root with the GVLA_ROOT env var.
+root: D:/groundedvla
+
+# Relative entries are resolved against `root`.
+models: models                         # one folder per checkpoint, named like the Hub repo
+smolvla_base: models/smolvla_base
+datasets: datasets
+libero_raw: datasets/libero            # original LIBERO hdf5 demos (RGB only)
+replayed: datasets/replayed            # A5: re-rendered demos with depth + segmentation
+lerobot_datasets: datasets/lerobot     # A5: LeRobot-format datasets per variant
+checkpoints: checkpoints
+outputs: outputs
+cache: cache
+
+# On the laptop the "fast local" copies are the same folders.
+local_models: models
+local_datasets: datasets

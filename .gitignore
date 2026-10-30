@@ -1,0 +1,14 @@
+__pycache__/
+*.pyc
+*.egg-info/
+build/
+.ipynb_checkpoints/
+.pytest_cache/
+wandb/
+outputs/
+checkpoints/
+*.hdf5
+*.mp4
+*.safetensors
+*.pt
+*.tar
