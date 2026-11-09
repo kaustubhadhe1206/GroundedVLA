@@ -10,6 +10,7 @@ accelerate==1.15.0
 peft==0.21.2
 draccus==0.10.0
 einops==0.8.2
+num2words==0.5.14            # SmolVLM's text processor (part of lerobot[smolvla])
 
 # LIBERO (Hugging Face packaging) and its simulator stack
 hf-libero==0.1.4
