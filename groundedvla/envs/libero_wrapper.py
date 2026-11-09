@@ -24,11 +24,16 @@ GRIPPER_OPEN, GRIPPER_CLOSE = -1.0, 1.0
 
 @dataclass
 class CameraPerturbation:
-    """Agentview camera change applied at reset (A7, Section 6.3)."""
-    yaw_deg: float = 0.0          # rotation around the workspace vertical axis
+    """Agentview camera change applied at reset (A7, Section 6.3).
+
+    The yaw rotates the camera around a vertical axis through `pivot`, so it orbits the
+    workspace and keeps looking at it. pivot=None uses the point where the unperturbed optical
+    axis meets the table top (world frame).
+    """
+    yaw_deg: float = 0.0
     height_m: float = 0.0
     fov_scale: float = 1.0
-    pivot: tuple = (0.0, 0.0, 0.9)  # TODO(A7): set to workspace center in world frame
+    pivot: tuple | None = None
 
 
 @dataclass
@@ -85,6 +90,7 @@ class LiberoWrapper:
         raw = self.env.reset()
         if self.camera_perturbation is not None:
             self.apply_camera_perturbation(self.camera_perturbation)
+            raw = self._render_obs()  # reset() rendered with the original camera
         if init_state is not None:
             raw = self.env.set_init_state(init_state)
         for _ in range(NUM_SETTLE_STEPS if settle else 0):
@@ -116,28 +122,74 @@ class LiberoWrapper:
         return obs
 
     def action_from_policy(self, a: np.ndarray) -> np.ndarray:
-        """SmolVLA 7-D output -> LIBERO action. TODO(A2): gripper binarization/sign check."""
+        """Policy 7-D output -> LIBERO action: clip to [-1, 1], binarize the gripper (+1 = close)."""
         a = np.asarray(a, dtype=np.float32)[:7].copy()
         a[6] = GRIPPER_CLOSE if a[6] > 0 else GRIPPER_OPEN
         return np.clip(a, -1.0, 1.0)
 
+    def _render_obs(self) -> dict:
+        self.env.env._update_observables(force=True)
+        return self.env.env._get_observations()
+
+    # ---------------- scene queries (A4 metrics, A6 ground truth) ----------------
+    @property
+    def robosuite_env(self):
+        return self.env.env
+
+    def scene_objects(self) -> dict[str, str]:
+        """{BDDL name: root body name} for movable objects and fixtures."""
+        e = self.robosuite_env
+        return {n: o.root_body for d in (e.objects_dict, e.fixtures_dict) for n, o in d.items()}
+
+    def movable_objects(self) -> list[str]:
+        return list(self.robosuite_env.objects_dict)
+
+    def object_center(self, name: str) -> np.ndarray:
+        """World-frame center of an object's collision geometry (axis-aligned box).
+
+        Ground truth for the grounding check. Not the body origin: e.g. the bowl's origin is at
+        its bottom, ~3 cm below its center.
+        """
+        geoms = object_geoms(self.sim, self.scene_objects()[name])
+        return geoms_aabb_center(self.sim, geoms)
+
+    def eval_goal(self) -> bool:
+        """The BDDL goal predicate, evaluated now (same check as LIBERO's success)."""
+        e = self.robosuite_env
+        return all(e._eval_predicate(s) for s in e.parsed_problem["goal_state"])
+
     # ---------------- camera perturbation (A7) ----------------
     def apply_camera_perturbation(self, p: CameraPerturbation):
-        """Rotate agentview around a vertical axis through `pivot`, raise it, scale FOV.
+        """Rotate agentview around a vertical axis through the pivot, raise it, scale FOV.
 
-        TODO(A7): confirm this survives env.reset() (LIBERO may rebuild the model XML).
+        LIBERO rebuilds the model on every reset (hard_reset=True), which restores the original
+        camera, so this runs after each env.reset(). If the model was *not* rebuilt, the saved
+        original pose is restored first, so perturbations never accumulate.
         """
         m = self.sim.model
         cid = m.camera_name2id("agentview")
-        pos = m.cam_pos[cid].copy()
-        quat_wxyz = m.cam_quat[cid].copy()
+        if getattr(self, "_cam0", None) is not None and self._cam0[0] is m._model:
+            m.cam_pos[cid], m.cam_quat[cid], m.cam_fovy[cid] = self._cam0[1:]
+            self.sim.forward()
+        self._cam0 = (m._model, m.cam_pos[cid].copy(), m.cam_quat[cid].copy(), float(m.cam_fovy[cid]))
+        assert m.cam_bodyid[cid] == 0, "agentview must be attached to the world body"
+
+        pivot = np.asarray(p.pivot) if p.pivot is not None else self.camera_look_at("agentview")
+        pos, quat_wxyz = m.cam_pos[cid].copy(), m.cam_quat[cid].copy()
         R_yaw = Rotation.from_euler("z", p.yaw_deg, degrees=True)
-        pivot = np.asarray(p.pivot)
         m.cam_pos[cid] = R_yaw.apply(pos - pivot) + pivot + np.array([0, 0, p.height_m])
         q = R_yaw * Rotation.from_quat(np.roll(quat_wxyz, -1))
         m.cam_quat[cid] = np.roll(q.as_quat(), 1)
         m.cam_fovy[cid] = m.cam_fovy[cid] * p.fov_scale
         self.sim.forward()
+
+    def camera_look_at(self, camera: str) -> np.ndarray:
+        """Where the camera's optical axis (MuJoCo cameras look along their -z) meets the table top."""
+        cid = self.sim.model.camera_name2id(camera)
+        origin = self.sim.data.cam_xpos[cid].copy()
+        direction = -self.sim.data.cam_xmat[cid].reshape(3, 3)[:, 2]
+        t = (table_top_z(self.sim) - origin[2]) / direction[2]
+        return origin + t * direction
 
     def close(self):
         self.env.close()
@@ -145,6 +197,40 @@ class LiberoWrapper:
 
 def flip(img: np.ndarray) -> np.ndarray:
     return np.ascontiguousarray(img[::-1, ::-1])
+
+
+def body_descendants(model, body_id: int) -> np.ndarray:
+    """Ids of `body_id` and all bodies below it (MuJoCo lists parents before children)."""
+    keep = np.zeros(model.nbody, bool)
+    keep[body_id] = True
+    for b in range(body_id + 1, model.nbody):
+        keep[b] = keep[model.body_parentid[b]]
+    return np.flatnonzero(keep)
+
+
+def object_geoms(sim, root_body: str, collision_only: bool = True) -> np.ndarray:
+    m = sim.model._model
+    bodies = body_descendants(m, sim.model.body_name2id(root_body))
+    g = np.flatnonzero(np.isin(m.geom_bodyid, bodies))
+    if collision_only:
+        g = g[(m.geom_contype[g] != 0) | (m.geom_conaffinity[g] != 0)]
+    return g
+
+
+def geoms_aabb_center(sim, geom_ids: np.ndarray) -> np.ndarray:
+    m, d = sim.model._model, sim.data._data
+    lo, hi = np.full(3, np.inf), np.full(3, -np.inf)
+    for g in geom_ids:
+        R = d.geom_xmat[g].reshape(3, 3)
+        c = d.geom_xpos[g] + R @ m.geom_aabb[g, :3]
+        ext = np.abs(R) @ m.geom_aabb[g, 3:]
+        lo, hi = np.minimum(lo, c - ext), np.maximum(hi, c + ext)
+    return (lo + hi) / 2
+
+
+def table_top_z(sim) -> float:
+    g = sim.model.geom_name2id("table_collision")
+    return float(sim.data.geom_xpos[g][2] + sim.model.geom_size[g][2])
 
 
 def quat2axisangle(quat_xyzw: np.ndarray) -> np.ndarray:

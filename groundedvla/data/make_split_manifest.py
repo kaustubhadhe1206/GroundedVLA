@@ -1,7 +1,7 @@
-"""Create data/split_manifest.json (plan Section 3.3). All three variants read the same file.
+"""Fill data/split_manifest.json (plan Section 3.3). All three variants read the same file.
 
-45 train / 5 val demos per task (after dropping failed replays), validation-rollout seeds,
-test seeds, and the OOD condition settings from ood/make_ood_states.py.
+5 validation demos per task, the rest for training, chosen from the demos that replayed
+successfully in replay_demos.py. Dropped replays are recorded too.
 
 Usage:
     python -m groundedvla.data.make_split_manifest --seed 0
@@ -9,6 +9,7 @@ Usage:
 import argparse
 import json
 
+import h5py
 import numpy as np
 
 from groundedvla.tasks import TASKS
@@ -16,6 +17,10 @@ from groundedvla.utils.paths import REPO_ROOT, load_paths
 
 MANIFEST = REPO_ROOT / "groundedvla" / "data" / "split_manifest.json"
 N_VAL = 5
+
+
+def demo_sort_key(name: str) -> int:
+    return int(name.split("_")[-1])
 
 
 def main():
@@ -30,12 +35,17 @@ def main():
     rng = np.random.default_rng(args.seed)
     manifest = json.loads(MANIFEST.read_text())
     for key in args.tasks:
-        kept = [f"demo_{i}" for i in range(50) if f"demo_{i}" not in dropped.get(key, [])]
+        spec = TASKS[key]
+        with h5py.File(paths["replayed"] / f"{key}.hdf5") as f:
+            kept = sorted((n for n in f if f[n].attrs.get("complete", False)), key=demo_sort_key)
         perm = rng.permutation(kept).tolist()
-        manifest["demos"][key] = {"train": sorted(perm[N_VAL:]), "val": sorted(perm[:N_VAL]),
+        manifest["demos"][key] = {"suite": spec.suite, "bddl_name": spec.bddl_name,
+                                  "train": sorted(perm[N_VAL:], key=demo_sort_key),
+                                  "val": sorted(perm[:N_VAL], key=demo_sort_key),
                                   "dropped": dropped.get(key, [])}
+        print(f"{key}: {len(perm) - N_VAL} train, {N_VAL} val, {len(dropped.get(key, []))} dropped")
     manifest["split_seed"] = args.seed
-    MANIFEST.write_text(json.dumps(manifest, indent=2))
+    MANIFEST.write_text(json.dumps(manifest, indent=2) + "\n")
     print(f"wrote {MANIFEST}")
 
 

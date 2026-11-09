@@ -24,7 +24,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 import groundedvla.envs.compat  # noqa: E402,F401  (must precede LIBERO / robosuite imports)
-from groundedvla.envs.libero_wrapper import LiberoWrapper  # noqa: E402
+from groundedvla.envs.libero_wrapper import CameraPerturbation, LiberoWrapper  # noqa: E402
 from groundedvla.eval.metrics import wilson_ci  # noqa: E402
 from groundedvla.eval.rollout import run_episode  # noqa: E402
 from groundedvla.policies.chunking import MODES, ChunkExecutor  # noqa: E402
@@ -56,6 +56,9 @@ def parse_args():
     ap.add_argument("--load-in-4bit", action="store_true", help="OpenVLA on small GPUs (needs bitsandbytes)")
     ap.add_argument("--load-in-8bit", action="store_true")
     ap.add_argument("--seed", type=int, default=0)
+    ap.add_argument("--camera-yaw", type=float, default=0.0, help="rotate agentview around the workspace (degrees)")
+    ap.add_argument("--camera-height", type=float, default=0.0, help="raise agentview (meters)")
+    ap.add_argument("--camera-fov-scale", type=float, default=1.0, help="scale agentview field of view")
     return ap.parse_args()
 
 
@@ -75,7 +78,9 @@ def main():
                           load_in_4bit=args.load_in_4bit, load_in_8bit=args.load_in_8bit)
     print(f"[run_sim] loaded {policy.checkpoint} in {time.perf_counter() - t0:.1f}s")
 
-    env = LiberoWrapper(task, with_depth_seg=False, seed=args.seed)
+    perturbed = args.camera_yaw or args.camera_height or args.camera_fov_scale != 1.0
+    camera = CameraPerturbation(args.camera_yaw, args.camera_height, args.camera_fov_scale) if perturbed else None
+    env = LiberoWrapper(task, with_depth_seg=False, seed=args.seed, camera_perturbation=camera)
     print(f"[run_sim] instruction: {env.instruction!r}")
     init_states = env.init_states()
     executor = ChunkExecutor(args.mode, horizon, args.te_m)

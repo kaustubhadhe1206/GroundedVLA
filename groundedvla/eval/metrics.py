@@ -21,9 +21,11 @@ class EpisodeResult:
     correct_object: bool = False
     grasp_success: bool = False
     correct_destination: bool = False
+    first_lifted: str | None = None
     # accuracy / safety / efficiency
     final_pos_error_cm: float = float("nan")
     collisions: int = 0
+    max_nontarget_displacement_cm: float = 0.0
     steps: int = 0
     sim_time_s: float = 0.0
     latency_ms: list = field(default_factory=list)

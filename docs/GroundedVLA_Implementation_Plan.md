@@ -328,8 +328,9 @@ GroundedVLA/                  # git repo root (public GitHub)
     00_colab_setup.ipynb      # Drive mount, clone, install, A1 checks
     01_pipeline_check.ipynb   # A3: smolvla_base / smolvla_libero rollouts + videos
     01b_openvla_pipeline_check.ipynb  # A3: OpenVLA-7B in its own runtime
-    02_train.ipynb            # B1/B3 training with auto-resume (added in Part B)
-    03_eval.ipynb             # B4/B5 evaluation (added in Part B)
+    02_build_dataset.ipynb    # A5 dataset build, A6/A7 checks
+    03_train.ipynb            # B1/B3 training with auto-resume (added in Part B)
+    04_eval.ipynb             # B4/B5 evaluation (added in Part B)
   groundedvla/                # python package
     tasks.py                  # T1-T4 specs
     utils/paths.py            # loads configs/paths/*.yaml
@@ -346,6 +347,8 @@ GroundedVLA/                  # git repo root (public GitHub)
     data/
       replay_demos.py         # re-render demos with depth + segmentation
       convert_to_lerobot.py   # write LeRobot dataset format
+      make_split_manifest.py  # train/val demos per task
+      check_dataset.py        # random frames + real SmolVLA loss on our data
       bddl_parser.py          # extract target and destination from goal
       split_manifest.json
     grounding/
@@ -360,6 +363,7 @@ GroundedVLA/                  # git repo root (public GitHub)
     eval/
       rollout.py
       metrics.py
+      monitor.py              # per-step signals: lifts, displacement, joint limits, final contacts
       collisions.py           # contact-based collision counting
       failure_labels.py       # automatic failure categories
       run_eval.py
@@ -524,8 +528,8 @@ Done when:
 2. Select the target's pixels from the agentview instance segmentation.
 3. Back-project those pixels to 3D camera coordinates using metric depth and the camera intrinsic matrix.
 4. Transform the points to world coordinates with the camera extrinsic matrix, then to the robot base frame using the base pose.
-   - **Frame conventions:** MuJoCo cameras look along −z with +y up (OpenGL). robosuite's `get_camera_extrinsic_matrix` already converts to the OpenCV convention (+z forward, +y down), which is what our pinhole back-projection assumes. Back-project on the **unflipped** depth and segmentation arrays (pixel coordinates must match the camera model); only images fed to the policy are flipped.
-5. Take the median of the points as the centroid (more robust to edge noise than the mean).
+   - **Frame conventions:** MuJoCo cameras look along −z with +y up (OpenGL). robosuite's `get_camera_extrinsic_matrix` already converts to the OpenCV convention (+z forward, +y down), which is what our pinhole back-projection assumes. Raw obs arrays have row 0 at the bottom, so back-project on `raw[::-1]` (vertical flip only), checked by projecting ground-truth positions onto the masks. Policy images use the 180 degree flip `raw[::-1, ::-1]`, which is that view mirrored left-right.
+5. Take the midpoint of the 5th and 95th percentile of the points on each axis as the centroid (a robust bounding-box center). Changed Nov 1 from the plain median: the camera sees one side of an object, which pulled the median about 2.4 cm off a bowl's center, while the box center stays within about 0.5 cm.
 6. Repeat for the destination.
 7. If the target has fewer than 20 visible pixels (occluded or inside the gripper), reuse the last valid centroid and set a visibility flag to 0.
 
@@ -543,7 +547,7 @@ Normalization:
 - Subtract the workspace center and divide by the workspace half-extent so every coordinate falls roughly in [-1, 1]. Compute these values once from the training data and save them with the checkpoint.
 
 Validation (`check_grounding.py`):
-- Compare centroids against the simulator's ground-truth object positions across all training data.
+- Compare centroids against the simulator's ground-truth object positions across all training data. Ground truth is the center of the object's collision geometry, not its body origin (a bowl's origin is at its bottom, about 3 cm below its center).
 - Project ground-truth positions back into the image and overlay masks, centroids, and coordinate axes on frames to catch frame-convention bugs.
 
 Done when:

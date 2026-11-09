@@ -14,6 +14,7 @@ import torch
 
 from groundedvla.envs.libero_wrapper import LiberoWrapper
 from groundedvla.eval.metrics import EpisodeResult
+from groundedvla.eval.monitor import EpisodeMonitor
 from groundedvla.policies.base import Policy
 from groundedvla.policies.chunking import ChunkExecutor
 from groundedvla.tasks import CONTROL_HZ
@@ -35,6 +36,7 @@ def run_episode(env: LiberoWrapper, policy: Policy, executor: ChunkExecutor, *, 
     res = EpisodeResult(task=env.task.key, instruction=env.instruction, variant=policy.name,
                         checkpoint=policy.checkpoint, seed=seed, condition=condition, episode_idx=episode_idx)
     obs = env.reset(init_state, settle=policy.settle)
+    monitor = EpisodeMonitor(env)
     policy.reset()
     executor.reset()
     recorder = VideoRecorder() if video_path is not None else None
@@ -53,6 +55,7 @@ def run_episode(env: LiberoWrapper, policy: Policy, executor: ChunkExecutor, *, 
         action, _ = executor.act(obs, timed_predict)
         obs, _, _, info = env.step(env.action_from_policy(action))
         step += 1
+        monitor.update(obs)
         if recorder is not None:
             recorder.add(obs)
         if on_step is not None and on_step(env, obs, step) is False:
@@ -63,8 +66,9 @@ def run_episode(env: LiberoWrapper, policy: Policy, executor: ChunkExecutor, *, 
 
     res.steps, res.sim_time_s = step, step / CONTROL_HZ
     res.grounding_ms = list(getattr(policy, "grounding_ms", []))
-    if not res.success:
-        res.failure = "aborted" if aborted else "timeout"  # TODO(A4): failure_labels.label_failure
+    if aborted and not res.success:
+        res.failure = "aborted"
+    monitor.finish(res)
     if recorder is not None:
         saved = recorder.save(video_path)
         res.video = str(saved) if saved else None
