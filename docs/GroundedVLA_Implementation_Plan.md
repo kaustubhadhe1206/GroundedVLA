@@ -445,6 +445,12 @@ Verified locally (Oct 30):
 - `smolvla_base` moves the arm (not frozen or saturated) with 0% success, as expected.
 - The checkpoint is only moderate on T1 (1/2 in both pipelines). Use 10 episodes per task on the A100 before drawing conclusions.
 
+Verified locally (Nov 8), `smolvla_libero`, horizon 1, 10 episodes per task, initial states 0–9:
+- T1: 4/10 (95% CI 17–69%). All 6 failures are `failed_grasp`: the bowl was never lifted and ended 12–20 cm from the plate.
+- T2: 8/10 (49–94%). Both failures grasped the correct bowl and timed out about 2.5 cm from the plate.
+- T3: 10/10 (72–100%).
+- T1 is the weakest task for the off-the-shelf checkpoint, leaving room for V1–V3 to differ.
+
 Done when:
 - Rollouts complete without errors for all three models.
 - `smolvla_base`: robot moves are within valid ranges, not saturated or frozen, and the arm visibly responds to the model.
@@ -496,6 +502,11 @@ Done when:
 - Running the harness on 10 expert demo replays reports 100% success, no failure labels, and correct values for every metric.
 - The path from task reset to observation, action, completed rollout, and saved metrics works end to end.
 
+Verified (Nov 8), 10 expert replays per task (demos 0–9):
+- 30/30 success, correct object, and grasp; no failure labels.
+- Final position error: T1 0.4–2.5 cm, T2 0.3–2.5 cm, T3 1.1–7.6 cm. T3 is larger because the stove's collision box is much bigger than its cook region.
+- Collisions: T1 0, T2 10 over 10 episodes, T3 2. Probed contact by contact, these are real grazes above 1 N between the gripper and a neighbouring non-target object: the cookie box in T2 and the cream cheese in T3. Human demos make them too, so the counter is correct. Compare variants against this expert baseline, not against 0.
+
 ### Step A5: Demo Replay with Depth and Segmentation
 
 Tasks:
@@ -515,6 +526,12 @@ Done when:
 - At least 90% of demos per task replay successfully.
 - Dataset loads in LeRobot and a random batch visualizes correctly.
 - Image preprocessing, tokenization, state format, action normalization, and chunk dimensions are checked against SmolVLA's expectations.
+
+Verified (Nov 8):
+- Demos kept: T1 44/50 (88%, just under the 90% target; the 6 drifted replays are listed in `dropped_replays.json`), T2 48/50, T3 49/50.
+- Split (seed 0, 5 val demos per task): T1 39/5, T2 43/5, T3 44/5.
+- `gvla_libero`: 141 episodes, 15,378 frames.
+- `check_dataset.py`: frames are upright, masks line up, normalized grounding is within [-1, 1], and the 50-step action chunks are in [-1, 1]. `smolvla_libero`'s own pre-processor and loss run on our batches, with a mean flow-matching loss of 0.076. That is in-distribution, so the format matches.
 
 ### Step A6: Masks and 3D Grounding Module
 
@@ -555,6 +572,12 @@ Done when:
 - 95th percentile error is under 4 cm. (Some offset is expected because the visible surface center differs from the object's body center.)
 - Mask images line up with the objects in the RGB frames.
 
+Verified (Nov 8), across all replayed training data:
+- Targets (bowls) pass on every task: median about 0.55 cm, p95 1.3–1.6 cm.
+- Destinations pass on T1/T2 (plate): median 0.5 cm, p95 2.4 cm.
+- **Open issue:** T3's destination (stove) fails, with a median of 3.1 cm and p95 of 7.1 cm. The stove's segmentation includes its knob and base, so the visible box center sits off the collision-geometry center. Options: accept it, since the destination is static and the error is consistent; restrict the destination to the `cook_region` site; or drop the knob geoms from the mask.
+- Overlays (`outputs/grounding_checks/`) show the masks aligned with the objects.
+
 ### Step A7: Camera Perturbation Support
 
 Tasks:
@@ -564,6 +587,10 @@ Tasks:
 Done when:
 - Under a 20 degree yaw rotation, centroid error stays under 2 cm (confirms grounding is camera-invariant).
 - Images visibly change while robot-frame centroids do not.
+
+Verified (Nov 8), 20 degree yaw:
+- Robot-frame centroid shift: median 0.11–0.28 cm for targets and the T1/T2 destinations, and 1.06 cm for the T3 stove. All are under 2 cm.
+- Mean absolute pixel change is about 26 out of 255.
 
 ---
 
