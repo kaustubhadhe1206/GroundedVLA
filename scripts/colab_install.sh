@@ -16,4 +16,6 @@ pip install -q -r /tmp/gvla_requirements.txt
 pip install -q --no-deps $(grep -E "$NO_DEPS" "$REQ" | tr '\n' ' ')
 pip install -q thop==0.1.1.post2209072238 tensorboardX==2.6.5 termcolor==3.3.0 psutil tqdm matplotlib tensorboard
 pip install -q -e . --no-deps
-python -c "import libero.libero, robosuite, mujoco; print('LIBERO stack OK, mujoco', mujoco.__version__)"
+# Don't import libero.libero here: before setup_session() writes its config it asks an interactive
+# question ("custom path for the dataset folder?") that blocks the notebook cell.
+python -c "import importlib.util, robosuite, mujoco; assert importlib.util.find_spec('libero'); print('LIBERO stack OK, mujoco', mujoco.__version__)"
