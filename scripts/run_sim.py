@@ -86,7 +86,16 @@ def main():
     executor = ChunkExecutor(args.mode, horizon, args.te_m)
     out_dir = Path(paths["outputs"]) / "run_sim" / args.model
     out_dir.mkdir(parents=True, exist_ok=True)
-    log_path = out_dir / f"{task.key.replace(':', '_')}.jsonl"
+    # Perturbed runs get their own log and video names, e.g. T3_yaw20, so they never mix with or
+    # overwrite the unperturbed T3 results.
+    condition = "run_sim"
+    if perturbed:
+        parts = [f"yaw{args.camera_yaw:g}" if args.camera_yaw else "",
+                 f"h{args.camera_height:+g}" if args.camera_height else "",
+                 f"fov{args.camera_fov_scale:g}" if args.camera_fov_scale != 1.0 else ""]
+        condition = "camera_" + "_".join(p for p in parts if p)
+    stem = task.key.replace(":", "_") + ("" if condition == "run_sim" else "_" + condition.removeprefix("camera_"))
+    log_path = out_dir / f"{stem}.jsonl"
 
     viewer = None
     if viewer_on:
@@ -103,9 +112,9 @@ def main():
             init = policy.begin_episode(ep)
             if init is None:
                 init = init_states[ep % len(init_states)]
-            video = out_dir / "videos" / f"{task.key.replace(':', '_')}_ep{ep:03d}.mp4" if args.save_video else None
+            video = out_dir / "videos" / f"{stem}_ep{ep:03d}.mp4" if args.save_video else None
             r = run_episode(env, policy, executor, init_state=init, max_steps=max_steps, seed=args.seed + ep,
-                            condition="run_sim", episode_idx=ep, video_path=video,
+                            condition=condition, episode_idx=ep, video_path=video,
                             on_step=on_step if viewer is not None else None)
             if r.failure == "aborted":
                 print("[run_sim] viewer closed, stopping")
