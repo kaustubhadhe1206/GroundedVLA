@@ -92,6 +92,7 @@ Everything lives on `D:\groundedvla` (plan Section 2.5). The code in this repo i
 | `01_pipeline_check.ipynb` | A3: `smolvla_base` and `smolvla_libero` rollouts with videos | A100 (T4 is slower) |
 | `01b_openvla_pipeline_check.ipynb` | A3: OpenVLA-7B rollouts, **separate runtime** | A100 |
 | `02_build_dataset.ipynb` | A5: masks, 3D grounding and LeRobot dataset; A6 and A7 checks | T4 is enough |
+| `03_train.ipynb` | B1/B3: throughput test, training with auto-resume, checkpoint selection, horizon tuning, first test | A100 |
 
 Datasets and weights are copied from Drive to `/content/local` before use (Drive is slow for many small reads). Checkpoints and results are written back to Drive.
 
@@ -100,7 +101,8 @@ Datasets and weights are copied from Drive to `/content/local` before use (Drive
 See plan Section 4. Main entry points:
 
 - `scripts/run_sim.py`: run any model, with a viewer or headless
-- `groundedvla/eval/run_eval.py`: the evaluation harness (resumable JSONL)
+- `groundedvla/train/train.py`: fine-tuning for V1/V2/V3 (checkpoints every 2k steps, auto-resume)
+- `groundedvla/eval/run_eval.py`: the evaluation harness (resumable JSONL; `--split val` for checkpoint selection)
 - `groundedvla/eval/report.py`: summary tables with 95% confidence intervals
 - `groundedvla/data/replay_demos.py`, `make_split_manifest.py`, `convert_to_lerobot.py`, `check_dataset.py`: the dataset build, run in that order
 - `groundedvla/grounding/check_grounding.py`: grounding accuracy and camera invariance checks

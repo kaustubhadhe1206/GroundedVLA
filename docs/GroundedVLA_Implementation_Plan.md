@@ -450,6 +450,9 @@ Verified locally (Nov 8), `smolvla_libero`, horizon 1, 10 episodes per task, ini
 - T2: 8/10 (49–94%). Both failures grasped the correct bowl and timed out about 2.5 cm from the plate.
 - T3: 10/10 (72–100%).
 - T1 is the weakest task for the off-the-shelf checkpoint, leaving room for V1–V3 to differ.
+- On T3 with a 20 degree yaw camera: 8/10 (49–94%), compared with 10/10 unperturbed. One failure was `dropped_object` and one `failed_grasp`.
+
+**`openvla_7b` skipped (Nov 8).** It was meant to validate the simulator, initial states and success detection without LeRobot. That is already covered: our pipeline matched `lerobot-eval` episode for episode, and the A4 expert replays succeed 30/30 with the success detector. Skipping it saves A100 budget.
 
 Done when:
 - Rollouts complete without errors for all three models.
@@ -644,7 +647,7 @@ Degradation = in-distribution success rate minus out-of-distribution success rat
 
 Step B1 starts once A1 to A5 pass their "done when" checks. Steps B2 and B3 start once A6 and A7 also pass.
 
-**Where training runs:** `notebooks/02_train.ipynb` on a Colab A100, opened through the Colab VS Code extension. The notebook clones the repo from GitHub, copies the dataset and weights from Drive to local disk, trains with auto-resume (Section 2.7), and writes checkpoints back to Drive. On CARC the same `groundedvla/train/train.py` runs from a Slurm script. The notebook is only a thin launcher, so both paths run identical code.
+**Where training runs:** `notebooks/03_train.ipynb` on a Colab A100, opened through the Colab VS Code extension. The notebook clones the repo from GitHub, copies the dataset and weights from Drive to local disk, trains with auto-resume (Section 2.7), and writes checkpoints back to Drive. On CARC the same `groundedvla/train/train.py` runs from a Slurm script. The notebook is only a thin launcher, so both paths run identical code.
 
 ### Step B1: Fine-Tune the RGB Baseline (V1)
 
@@ -661,6 +664,16 @@ Starting hyperparameters:
 
 Track:
 - Training and validation loss, learning rate, GPU memory, and training time.
+
+Implementation (`groundedvla/train/train.py`, Nov 8):
+- The policy is built from `smolvla_base` with our input features: 2 RGB cameras (plus the mask for V2/V3), 8-D state, 7-D action. `smolvla_base` pads state and action to 32-D, so all its weights load unchanged.
+- 99.9M of 450M parameters are trainable: the action expert and the projections.
+- Weights stay in bf16, as in LeRobot's SmolVLA recipe; `HuggingFaceVLA/smolvla_libero` also stores its trained expert in bf16. Forward passes use bf16 autocast.
+- AdamW (betas 0.9/0.95), grad clip 10, cosine from 1e-4 to 2.5e-6 over the full 20k steps after 1k warmup.
+- Validation loss uses the 15 val demos with fixed noise and time seeds, so it is comparable across steps.
+- Checkpoints follow Section 2.7: the newest 2 are kept in full; the 10k/15k/20k and lowest-val-loss checkpoints keep weights only.
+- Checkpoint selection and horizon tuning use `run_eval --split val`, which starts from the validation demos' initial states with `val_rollout_seed`. LIBERO's test states are never used for selection.
+- Verified locally with batch 2 on the 4 GB laptop GPU: train, save, resume (the schedule and RNG continue), then load the checkpoint in `run_eval` and roll out.
 
 Then:
 - Tune execution horizon N (5, 10, 25) on the validation rollouts and fix the best N for every experiment afterward.

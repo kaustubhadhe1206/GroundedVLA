@@ -30,6 +30,10 @@ train:
   scheduler: cosine
   precision: bf16
   checkpoint_every: 2000
+  log_every: 100
+  val_every: 1000
+  val_batches: 25             # x batch_size frames of the 15 val demos
+  num_workers: 8
   select_from_steps: [10000, 15000, 20000]
 
 eval:
