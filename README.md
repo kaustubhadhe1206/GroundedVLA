@@ -52,7 +52,9 @@ Then open http://127.0.0.1:8765. The left side has the scene picker (T1–T4, in
 - A later prompt continues from the current state until you press **Reset**.
 - **Stop** ends the current instruction.
 
-The prompt replaces the task instruction word for word. Policies only know the instructions they were trained on, so other prompts show their limits. "Scene goal satisfied" checks the scene's BDDL goal, whatever the prompt says. `smolvla_libero` needs horizon 1, which is about 1 s per step on the laptop GPU; our checkpoints with N = 10 are about 10× faster.
+The prompt replaces the task instruction word for word. Policies only know the instructions they were trained on, so other prompts show their limits. "Scene goal satisfied" checks the scene's BDDL goal, whatever the prompt says.
+
+Speed: a policy call takes about 0.8 s on the laptop's RTX 3050, and `smolvla_libero` re-plans every step, so live motion runs at about 1 step/s. With **Smooth playback** (on by default) the run is computed first, with a live preview and a progress bar, then played at the real 20 Hz. **Replay** plays the last run again, which is handy for screen recording. Untick the box, or pass `--live`, to watch each step as it is computed. Our checkpoints with N = 10 plan 10 steps per call, so they are about 10× faster.
 
 ## Tasks
 

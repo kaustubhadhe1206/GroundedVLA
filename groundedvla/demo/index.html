@@ -42,6 +42,9 @@
   .dot.running { background: var(--warn); animation: pulse 1s infinite; }
   .dot.idle { background: var(--ok); }
   .dot.loading { background: var(--accent); animation: pulse 1s infinite; }
+  .dot.playing { background: var(--accent); }
+  .toggle { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; cursor: pointer; }
+  .toggle input { width: 15px; height: 15px; accent-color: var(--accent2); }
   @keyframes pulse { 50% { opacity: .35; } }
   .bar { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
   .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
@@ -90,9 +93,13 @@
       <textarea id="prompt" placeholder="e.g. pick up the black bowl between the plate and the ramekin and place it on the plate"></textarea>
       <div class="row" style="margin-top:8px">
         <button class="primary" id="run">Run ▶</button>
+        <button id="replay" title="play the last run again at real speed">Replay ⟲</button>
         <button class="danger" id="stop">Stop</button>
-        <span class="sub">Ctrl+Enter to run</span>
       </div>
+      <label class="toggle" title="The model needs ~1 s per step on a laptop GPU. Smooth playback computes the run first, then plays it at the real 20 Hz.">
+        <input type="checkbox" id="playback"> Smooth playback <span class="sub">(compute first, then play at real speed)</span>
+      </label>
+      <div class="sub" style="margin-top:4px">Ctrl+Enter to run</div>
       <div class="sugg" id="sugg"></div>
     </section>
 
@@ -161,8 +168,11 @@ function render(s) {
   $("log").textContent = s.history.join("\n");
   $("log").scrollTop = 1e9;
 
-  $("run").disabled = busy; $("reset").disabled = busy; $("stop").disabled = s.status !== "running";
-  $("banner").style.display = s.prompt && s.status === "running" ? "block" : "none";
+  $("run").disabled = busy; $("reset").disabled = busy;
+  $("replay").disabled = busy || !s.has_recording;
+  $("stop").disabled = !(s.status === "running" || s.status === "playing");
+  if (document.activeElement !== $("playback")) $("playback").checked = s.playback;
+  $("banner").style.display = s.prompt && (s.status === "running" || s.status === "playing") ? "block" : "none";
   $("bannertext").textContent = s.prompt;
 
   const sugKey = JSON.stringify(s.suggestions);
@@ -190,6 +200,8 @@ function run() {
 }
 $("run").onclick = run;
 $("stop").onclick = () => cmd({ cmd: "stop" });
+$("replay").onclick = () => cmd({ cmd: "replay" });
+$("playback").onchange = () => cmd({ cmd: "playback", on: $("playback").checked });
 $("reset").onclick = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
 $("task").onchange = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
 $("camera").onchange = () => cmd({ cmd: "camera", name: $("camera").value });

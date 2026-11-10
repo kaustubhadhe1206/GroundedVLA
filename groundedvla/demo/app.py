@@ -8,6 +8,11 @@ Left: scene, prompt, status and what the model sees. Right: live simulator view 
 The robot only moves after you submit a prompt; a later prompt continues from the current state
 until you reset the scene.
 
+Speed: a policy call takes ~0.9 s on the laptop's RTX 3050 (measured; physics 19 ms, rendering 2 ms),
+and smolvla_libero must re-plan every step, so live motion runs at ~1 step/s. Smooth playback (the
+default) computes the run first, with a live preview, then plays it at the real 20 Hz; Replay
+plays the last run again. `--live` starts in live mode instead.
+
 The prompt is fed to the policy verbatim in place of the task instruction. The policy only knows
 the tasks it was trained on, so prompts outside them show its limits. "Goal satisfied" is the
 scene's own BDDL goal (e.g. bowl on plate), whatever the prompt says.
@@ -19,6 +24,7 @@ Bound to 127.0.0.1, so it is reachable from this machine only.
 import argparse
 import io
 import json
+import os
 import queue
 import sys
 import threading
@@ -54,8 +60,12 @@ class Frames:
         self.cond = threading.Condition()
         self.data: dict[str, tuple[int, bytes]] = {}
 
-    def put(self, name: str, img: np.ndarray) -> None:
+    def put(self, name: str, img: np.ndarray) -> bytes:
         b = jpeg(img)
+        self.put_bytes(name, b)
+        return b
+
+    def put_bytes(self, name: str, b: bytes) -> None:
         with self.cond:
             n = self.data.get(name, (0, b""))[0] + 1
             self.data[name] = (n, b)
@@ -77,10 +87,11 @@ class Demo:
                       "mode": args.mode, "horizon": None, "task": None, "instruction": "", "goal": "",
                       "init": 0, "prompt": "", "step": 0, "max_steps": 0, "goal_satisfied": False,
                       "latency_ms": None, "camera": args.camera, "cameras": [], "tasks": list(TASKS),
-                      "suggestions": [], "history": []}
+                      "suggestions": [], "history": [], "playback": args.playback, "has_recording": False}
         self.env: LiberoWrapper | None = None
         self.obs = None
         self.policy = None
+        self.recording: list[tuple[bytes, bytes]] = []   # JPEG (main, inputs) per step of the last run
 
     # ------------------------------------------------------------------ state for the page
     def update(self, **kw) -> None:
@@ -97,14 +108,30 @@ class Demo:
         print(f"[demo] {text}", flush=True)
 
     # ------------------------------------------------------------------ rendering
-    def render(self) -> None:
+    def render(self) -> tuple[bytes, bytes | None]:
+        """Show the current state; returns the JPEGs so a run can be recorded for playback."""
         cam = self.state["camera"]
         w, h = self.args.display_size
         raw = self.env.sim.render(camera_name=cam, width=w, height=h)
-        self.frames.put("main", np.ascontiguousarray(raw[::-1]))          # true camera view, upright
+        main = self.frames.put("main", np.ascontiguousarray(raw[::-1]))   # true camera view, upright
+        inputs = None
         if self.obs is not None:
-            self.frames.put("inputs", np.concatenate(
+            inputs = self.frames.put("inputs", np.concatenate(
                 [self.obs["observation.images.image"], self.obs["observation.images.image2"]], 1))
+        return main, inputs
+
+    def play(self, frames: list[tuple[bytes, bytes | None]], label: str) -> bool:
+        """Play recorded frames at the real control rate (20 Hz). Returns False if stopped."""
+        self.update(status="playing", message=f"{label}: real-time playback")
+        for main, inputs in frames:
+            t0 = time.perf_counter()
+            if self.stop_requested():
+                return False
+            self.frames.put_bytes("main", main)
+            if inputs is not None:
+                self.frames.put_bytes("inputs", inputs)
+            time.sleep(max(0.0, 1.0 / CONTROL_HZ - (time.perf_counter() - t0)))
+        return True
 
     # ------------------------------------------------------------------ commands (main thread)
     def load_scene(self, task_key: str, init: int) -> None:
@@ -142,18 +169,19 @@ class Demo:
         prompt = " ".join(prompt.split())
         if not prompt:
             return
-        max_steps = self.state["max_steps"]
+        max_steps, playback = self.state["max_steps"], self.state["playback"]
         self.update(status="running", prompt=prompt, step=0, message="thinking...")
         self.log(f'prompt: "{prompt}"')
         self.policy.reset()
         self.executor.reset()
         latencies = []
+        frames = [self.render()]
 
         def predict(o):
             t0 = time.perf_counter()
             chunk = self.policy.predict_chunk(o)
             latencies.append((time.perf_counter() - t0) * 1e3)
-            self.update(latency_ms=round(latencies[-1]), message="acting")
+            self.update(latency_ms=round(latencies[-1]))
             return chunk
 
         outcome, step = "time limit reached", 0
@@ -167,16 +195,27 @@ class Demo:
             action, _ = self.executor.act(self.obs, predict)
             self.obs, _, _, info = self.env.step(self.env.action_from_policy(action))
             satisfied = bool(info["success"])
-            self.update(step=step, goal_satisfied=satisfied)
-            self.render()
+            msg = (f"computing step {step} / {max_steps}, smooth playback starts when done" if playback
+                   else "acting live")
+            self.update(step=step, goal_satisfied=satisfied, message=msg)
+            frames.append(self.render())
             if satisfied:
                 outcome = "goal satisfied"
                 break
-            if self.args.realtime:
+            if self.args.realtime and not playback:
                 time.sleep(max(0.0, 1.0 / CONTROL_HZ - (time.perf_counter() - t0)))
         lat = f", median policy call {np.median(latencies):.0f} ms" if latencies else ""
-        self.update(status="idle", message=f"{outcome} after {step} steps. Type another prompt or reset.")
         self.log(f"{outcome} after {step} steps{lat}")
+        self.recording = frames
+        self.update(has_recording=True)
+        if playback and outcome != "stopped":
+            self.play(frames, outcome)
+        self.update(status="idle", message=f"{outcome} after {step} steps. Type another prompt, Replay, or Reset.")
+
+    def replay(self) -> None:
+        if self.recording:
+            done = self.play(self.recording, "replay")
+            self.update(status="idle", message="replay finished" if done else "replay stopped")
 
     def stop_requested(self) -> bool:
         """Drain the queue while running: 'stop' ends the episode, other commands wait their turn."""
@@ -210,6 +249,10 @@ class Demo:
             self.run_prompt(str(cmd.get("prompt", ""))[:500])
         elif kind == "camera":
             self.set_camera(cmd.get("name", ""))
+        elif kind == "replay":
+            self.replay()
+        elif kind == "playback":
+            self.update(playback=bool(cmd.get("on", True)))
 
     def main_loop(self) -> None:
         a = self.args
@@ -282,7 +325,7 @@ def make_handler(demo: Demo):
             try:
                 n = min(int(self.headers.get("Content-Length", 0)), 10_000)
                 cmd = json.loads(self.rfile.read(n) or b"{}")
-                if cmd.get("cmd") not in ("reset", "run", "stop", "camera"):
+                if cmd.get("cmd") not in ("reset", "run", "stop", "camera", "replay", "playback"):
                     raise ValueError("unknown command")
             except (ValueError, json.JSONDecodeError) as e:
                 return self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")
@@ -305,17 +348,29 @@ def parse_args():
     ap.add_argument("--max-steps", type=int, default=None, help="per prompt (default: the task's limit)")
     ap.add_argument("--camera", default="agentview", help="initial display camera")
     ap.add_argument("--display-size", type=int, nargs=2, default=(640, 480), metavar=("W", "H"))
-    ap.add_argument("--no-realtime", dest="realtime", action="store_false", help="don't slow down to 20 Hz")
+    ap.add_argument("--no-realtime", dest="realtime", action="store_false", help="live mode: don't cap at 20 Hz")
+    ap.add_argument("--live", dest="playback", action="store_false",
+                    help="start in live mode (show each step as computed) instead of smooth playback")
     ap.add_argument("--device", default=None)
     ap.add_argument("--port", type=int, default=8765)
     return ap.parse_args()
 
 
+class Server(ThreadingHTTPServer):
+    # On Windows SO_REUSEADDR lets a second server bind the same port silently, so a stale demo
+    # would keep answering. Without it, starting the demo twice fails loudly instead.
+    allow_reuse_address = os.name != "nt"
+    daemon_threads = True
+
+
 def main():
     args = parse_args()
+    try:
+        server = Server(("127.0.0.1", args.port), None)
+    except OSError:
+        sys.exit(f"[demo] port {args.port} is in use: is the demo already running? Close it or pass --port.")
     demo = Demo(args, load_paths())
-    server = ThreadingHTTPServer(("127.0.0.1", args.port), make_handler(demo))
-    server.daemon_threads = True
+    server.RequestHandlerClass = make_handler(demo)
     threading.Thread(target=server.serve_forever, daemon=True).start()
     print(f"[demo] open http://127.0.0.1:{args.port}  (Ctrl+C to quit)", flush=True)
     try:
