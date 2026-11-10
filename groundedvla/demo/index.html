@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GroundedVLA Demo</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --panel2: #1e222b; --line: #2a2f3a;
+    --text: #e7e9ee; --muted: #9aa3b2; --accent: #6ea8ff; --accent2: #3d7bea;
+    --ok: #3ecf8e; --warn: #f5b84b; --bad: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  html, body { height: 100%; margin: 0; }
+  body { background: var(--bg); color: var(--text); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  .app { display: grid; grid-template-columns: 400px 1fr; height: 100vh; }
+  .left { border-right: 1px solid var(--line); overflow-y: auto; padding: 18px; display: flex; flex-direction: column; gap: 14px; }
+  .right { position: relative; display: flex; align-items: center; justify-content: center; background: #000; overflow: hidden; }
+  h1 { font-size: 20px; margin: 0; letter-spacing: .2px; }
+  .sub { color: var(--muted); font-size: 12.5px; margin-top: 2px; }
+  .chip { display: inline-block; padding: 2px 8px; border-radius: 999px; background: var(--panel2); border: 1px solid var(--line); color: var(--muted); font-size: 12px; }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 10px; padding: 12px; }
+  .card h2 { font-size: 11.5px; text-transform: uppercase; letter-spacing: .8px; color: var(--muted); margin: 0 0 8px; font-weight: 600; }
+  .row { display: flex; gap: 8px; align-items: center; }
+  select, input, textarea, button { font: inherit; color: var(--text); background: var(--panel2); border: 1px solid var(--line); border-radius: 8px; }
+  select, input { padding: 7px 8px; }
+  input[type=number] { width: 72px; }
+  textarea { width: 100%; min-height: 76px; resize: vertical; padding: 9px 10px; }
+  textarea:focus, select:focus, input:focus { outline: 2px solid var(--accent2); border-color: transparent; }
+  button { padding: 8px 14px; cursor: pointer; }
+  button.primary { background: var(--accent2); border-color: var(--accent2); font-weight: 600; }
+  button.primary:hover { background: var(--accent); }
+  button.danger { color: var(--bad); }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  .kv { color: var(--muted); font-size: 12.5px; margin-top: 8px; }
+  .kv b { color: var(--text); font-weight: 500; }
+  .sugg { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+  .sugg button { text-align: left; padding: 7px 9px; font-size: 12.5px; color: var(--text); }
+  .sugg .tag { font-size: 10.5px; color: var(--muted); text-transform: uppercase; letter-spacing: .5px; margin-right: 6px; }
+  .status { display: flex; align-items: center; gap: 8px; font-weight: 600; }
+  .dot { width: 9px; height: 9px; border-radius: 50%; background: var(--muted); }
+  .dot.running { background: var(--warn); animation: pulse 1s infinite; }
+  .dot.idle { background: var(--ok); }
+  .dot.loading { background: var(--accent); animation: pulse 1s infinite; }
+  @keyframes pulse { 50% { opacity: .35; } }
+  .bar { height: 6px; background: var(--panel2); border-radius: 999px; overflow: hidden; margin: 10px 0 6px; }
+  .bar > div { height: 100%; width: 0; background: var(--accent); transition: width .2s; }
+  .goal { margin-top: 8px; font-size: 13px; }
+  .goal.yes { color: var(--ok); } .goal.no { color: var(--muted); }
+  .msg { color: var(--muted); font-size: 12.5px; margin-top: 6px; }
+  .inputs img { width: 100%; border-radius: 6px; display: block; image-rendering: auto; }
+  .inputs .cap { display: flex; justify-content: space-between; color: var(--muted); font-size: 11.5px; margin-top: 4px; }
+  .log { font: 11.5px/1.5 ui-monospace, Consolas, monospace; color: var(--muted); white-space: pre-wrap; max-height: 150px; overflow-y: auto; }
+  #view { max-width: 100%; max-height: 100%; object-fit: contain; }
+  .overlay-top { position: absolute; top: 14px; right: 14px; display: flex; gap: 8px; align-items: center; }
+  .overlay-top select { background: rgba(23,26,33,.85); }
+  .banner { position: absolute; left: 50%; bottom: 22px; transform: translateX(-50%); max-width: 80%; background: rgba(15,17,21,.82);
+            border: 1px solid var(--line); border-radius: 10px; padding: 10px 16px; font-size: 16px; text-align: center; display: none; }
+  .banner small { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .8px; margin-bottom: 2px; }
+  @media (max-width: 900px) {
+    .app { grid-template-columns: 1fr; grid-template-rows: auto 60vh; height: auto; }
+    .right { order: -1; height: 60vh; }
+    .left { border-right: 0; }
+  }
+</style>
+</head>
+<body>
+<div class="app">
+  <aside class="left">
+    <div>
+      <h1>GroundedVLA</h1>
+      <div class="sub">Language-conditioned pick-and-place with SmolVLA in LIBERO</div>
+      <div style="margin-top:8px" class="row"><span class="chip" id="model">model</span><span class="chip" id="exec">mode</span></div>
+    </div>
+
+    <section class="card">
+      <h2>Scene</h2>
+      <div class="row">
+        <select id="task" title="scene"></select>
+        <label class="sub" for="init">initial state</label>
+        <input id="init" type="number" min="0" max="49" value="0">
+        <button id="reset">Reset</button>
+      </div>
+      <div class="kv">Trained instruction: <b id="instruction">–</b></div>
+      <div class="kv">Scene goal: <b id="goaltext">–</b></div>
+    </section>
+
+    <section class="card">
+      <h2>Instruction</h2>
+      <textarea id="prompt" placeholder="e.g. pick up the black bowl between the plate and the ramekin and place it on the plate"></textarea>
+      <div class="row" style="margin-top:8px">
+        <button class="primary" id="run">Run ▶</button>
+        <button class="danger" id="stop">Stop</button>
+        <span class="sub">Ctrl+Enter to run</span>
+      </div>
+      <div class="sugg" id="sugg"></div>
+    </section>
+
+    <section class="card">
+      <h2>Status</h2>
+      <div class="status"><span class="dot" id="dot"></span><span id="status">loading</span></div>
+      <div class="bar"><div id="progress"></div></div>
+      <div class="sub" id="steps">step 0 / 0</div>
+      <div class="goal no" id="goal">○ scene goal not satisfied</div>
+      <div class="msg" id="message"></div>
+      <div class="kv">Policy call: <b id="latency">–</b></div>
+    </section>
+
+    <section class="card inputs">
+      <h2>What the model sees</h2>
+      <img id="inputs" src="/stream/inputs" alt="policy inputs: agentview and wrist camera">
+      <div class="cap"><span>agentview (256×256)</span><span>wrist (256×256)</span></div>
+    </section>
+
+    <section class="card">
+      <h2>Log</h2>
+      <div class="log" id="log"></div>
+    </section>
+  </aside>
+
+  <main class="right">
+    <img id="view" src="/stream/main" alt="live simulator view">
+    <div class="overlay-top"><span class="chip">camera</span><select id="camera"></select></div>
+    <div class="banner" id="banner"><small>instruction</small><span id="bannertext"></span></div>
+  </main>
+</div>
+
+<script>
+const $ = id => document.getElementById(id);
+let S = {}, filledTasks = false, camKey = "";
+
+async function cmd(body) {
+  await fetch("/cmd", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+}
+
+function render(s) {
+  S = s;
+  const busy = s.status !== "idle";
+  $("model").textContent = s.model;
+  $("exec").textContent = s.mode === "naive" ? `naive · N=${s.horizon ?? "?"}` : "temporal ensemble";
+  if (!filledTasks && s.tasks.length) {
+    $("task").innerHTML = s.tasks.map(t => `<option>${t}</option>`).join("");
+    filledTasks = true;
+  }
+  if (document.activeElement !== $("task") && s.task) $("task").value = s.task;
+  if (document.activeElement !== $("init")) $("init").value = s.init;
+  const ck = s.cameras.join(",");
+  if (ck !== camKey) { $("camera").innerHTML = s.cameras.map(c => `<option>${c}</option>`).join(""); camKey = ck; }
+  if (document.activeElement !== $("camera")) $("camera").value = s.camera;
+  $("instruction").textContent = s.instruction || "–";
+  $("goaltext").textContent = s.goal || "–";
+
+  $("dot").className = "dot " + s.status;
+  $("status").textContent = s.status;
+  $("steps").textContent = `step ${s.step} / ${s.max_steps}`;
+  $("progress").style.width = s.max_steps ? `${100 * s.step / s.max_steps}%` : "0";
+  $("goal").className = "goal " + (s.goal_satisfied ? "yes" : "no");
+  $("goal").textContent = s.goal_satisfied ? "✓ scene goal satisfied" : "○ scene goal not satisfied";
+  $("message").textContent = s.message || "";
+  $("latency").textContent = s.latency_ms == null ? "–" : `${s.latency_ms} ms`;
+  $("log").textContent = s.history.join("\n");
+  $("log").scrollTop = 1e9;
+
+  $("run").disabled = busy; $("reset").disabled = busy; $("stop").disabled = s.status !== "running";
+  $("banner").style.display = s.prompt && s.status === "running" ? "block" : "none";
+  $("bannertext").textContent = s.prompt;
+
+  const sugKey = JSON.stringify(s.suggestions);
+  if ($("sugg").dataset.key !== sugKey) {
+    $("sugg").dataset.key = sugKey;
+    $("sugg").innerHTML = "";
+    for (const g of s.suggestions) {
+      const b = document.createElement("button");
+      b.innerHTML = `<span class="tag">${g.kind}</span>`;
+      b.append(document.createTextNode(g.text));
+      b.onclick = () => { $("prompt").value = g.text; $("prompt").focus(); };
+      $("sugg").append(b);
+    }
+  }
+}
+
+async function poll() {
+  try { render(await (await fetch("/state")).json()); } catch (e) { $("status").textContent = "server not reachable"; }
+  setTimeout(poll, 250);
+}
+
+function run() {
+  const p = $("prompt").value.trim();
+  if (p && S.status === "idle") cmd({ cmd: "run", prompt: p });
+}
+$("run").onclick = run;
+$("stop").onclick = () => cmd({ cmd: "stop" });
+$("reset").onclick = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
+$("task").onchange = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
+$("camera").onchange = () => cmd({ cmd: "camera", name: $("camera").value });
+$("prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); } });
+poll();
+</script>
+</body>
+</html>

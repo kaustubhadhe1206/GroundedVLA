@@ -39,6 +39,21 @@ Every episode is also logged as one JSON line in `<outputs>/run_sim/<model>/<tas
 
 OpenVLA-7B needs about 16 GB of GPU memory and its own environment, so run it on Colab with `notebooks/01b_openvla_pipeline_check.ipynb`.
 
+## Interactive demo (laptop, browser)
+
+```powershell
+.\demo smolvla_libero --task T1
+.\demo smolvla_ckpt --checkpoint D:\groundedvla\checkpoints\v1_rgb\step_020000 --horizon 10 --task T3
+```
+
+Then open http://127.0.0.1:8765. The left side has the scene picker (T1–T4, initial state), an instruction box with one-click suggestions, status and progress, the scene goal, and the two images the model sees. The right side shows the live simulator, with any scene camera (agentview, frontview, sideview, ...).
+
+- The robot only moves after you press **Run** (Ctrl+Enter).
+- A later prompt continues from the current state until you press **Reset**.
+- **Stop** ends the current instruction.
+
+The prompt replaces the task instruction word for word. Policies only know the instructions they were trained on, so other prompts show their limits. "Scene goal satisfied" checks the scene's BDDL goal, whatever the prompt says. `smolvla_libero` needs horizon 1, which is about 1 s per step on the laptop GPU; our checkpoints with N = 10 are about 10× faster.
+
 ## Tasks
 
 | Key | Suite | Instruction | Max steps |
