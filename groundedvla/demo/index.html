@@ -43,6 +43,15 @@
   .dot.idle { background: var(--ok); }
   .dot.loading { background: var(--accent); animation: pulse 1s infinite; }
   .dot.playing { background: var(--accent); }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
+  .grid2 label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
+  .grid2 output { color: var(--text); }
+  .grid2 input[type=range] { width: 100%; accent-color: var(--accent2); }
+  .grid2 input[type=number] { width: 64px; }
+  .chip.on { color: var(--text); border-color: var(--accent2); }
+  .results { display: flex; flex-direction: column; gap: 4px; margin-top: 8px; }
+  .results div { font-size: 12.5px; padding: 5px 8px; border-radius: 6px; background: var(--panel2); }
+  .results .ok { color: var(--ok); } .results .fail { color: var(--bad); }
   .toggle { display: flex; align-items: center; gap: 6px; margin-top: 10px; font-size: 13px; cursor: pointer; }
   .toggle input { width: 15px; height: 15px; accent-color: var(--accent2); }
   @keyframes pulse { 50% { opacity: .35; } }
@@ -73,7 +82,7 @@
     <div>
       <h1>GroundedVLA</h1>
       <div class="sub">Language-conditioned pick-and-place with SmolVLA in LIBERO</div>
-      <div style="margin-top:8px" class="row"><span class="chip" id="model">model</span><span class="chip" id="exec">mode</span></div>
+      <div style="margin-top:8px" class="row" id="agents"></div>
     </div>
 
     <section class="card">
@@ -86,6 +95,26 @@
       </div>
       <div class="kv">Trained instruction: <b id="instruction">–</b></div>
       <div class="kv">Scene goal: <b id="goaltext">–</b></div>
+    </section>
+
+    <section class="card">
+      <h2>Test conditions <span class="sub" style="text-transform:none;letter-spacing:0">(applied on reset)</span></h2>
+      <div class="grid2">
+        <label>Camera yaw <output id="yawv">0°</output>
+          <input id="yaw" type="range" min="-30" max="30" step="5" value="0"></label>
+        <label>Camera height <output id="heightv">0 cm</output>
+          <input id="height" type="range" min="0" max="15" step="5" value="0"></label>
+        <label>Field of view <output id="fovv">×1.00</output>
+          <input id="fov" type="range" min="0.9" max="1.2" step="0.05" value="1"></label>
+        <label>Target shift x / y (cm)
+          <span class="row"><input id="dx" type="number" min="-15" max="15" step="1" value="0">
+          <input id="dy" type="number" min="-15" max="15" step="1" value="0"></span></label>
+      </div>
+      <div class="row" style="margin-top:10px">
+        <button id="apply">Apply &amp; reset</button>
+        <button id="clear">In-distribution</button>
+      </div>
+      <div class="kv">Now: <b id="condtext">–</b></div>
     </section>
 
     <section class="card">
@@ -110,6 +139,7 @@
       <div class="sub" id="steps">step 0 / 0</div>
       <div class="goal no" id="goal">○ scene goal not satisfied</div>
       <div class="msg" id="message"></div>
+      <div id="results" class="results"></div>
       <div class="kv">Policy call: <b id="latency">–</b></div>
     </section>
 
@@ -143,8 +173,37 @@ async function cmd(body) {
 function render(s) {
   S = s;
   const busy = s.status !== "idle";
-  $("model").textContent = s.model;
-  $("exec").textContent = s.mode === "naive" ? `naive · N=${s.horizon ?? "?"}` : "temporal ensemble";
+  const agentKey = JSON.stringify([s.agents, s.running_agent, s.mode]);
+  if ($("agents").dataset.key !== agentKey) {
+    $("agents").dataset.key = agentKey;
+    $("agents").innerHTML = "";
+    s.agents.forEach((a, i) => {
+      if (i) { const vs = document.createElement("span"); vs.className = "sub"; vs.textContent = "vs"; $("agents").append(vs); }
+      const c = document.createElement("span");
+      c.className = "chip" + (a.label === s.running_agent ? " on" : "");
+      c.textContent = `${a.label} · ${s.mode === "naive" ? "N=" + a.horizon : "temporal ensemble"}`;
+      $("agents").append(c);
+    });
+  }
+  const c = s.conditions;
+  for (const k of ["yaw", "height", "fov", "dx", "dy"]) {
+    const el = $(k), v = k === "height" ? c.height * 100 : (k === "dx" || k === "dy") ? c[k] * 100 : c[k];
+    if (document.activeElement !== el && el.dataset.dirty !== "1") el.value = Math.round(v * 100) / 100;
+  }
+  showCond();
+  $("condtext").textContent = s.conditions_text;
+  const resKey = JSON.stringify(s.results);
+  if ($("results").dataset.key !== resKey) {
+    $("results").dataset.key = resKey;
+    $("results").innerHTML = "";
+    for (const r of s.results) {
+      const d = document.createElement("div");
+      const ok = r.outcome === "goal satisfied";
+      d.className = ok ? "ok" : "fail";
+      d.textContent = `${ok ? "✓" : "✗"} ${r.label}: ${r.outcome} (${r.steps} steps)`;
+      $("results").append(d);
+    }
+  }
   if (!filledTasks && s.tasks.length) {
     $("task").innerHTML = s.tasks.map(t => `<option>${t}</option>`).join("");
     filledTasks = true;
@@ -168,7 +227,7 @@ function render(s) {
   $("log").textContent = s.history.join("\n");
   $("log").scrollTop = 1e9;
 
-  $("run").disabled = busy; $("reset").disabled = busy;
+  $("run").disabled = busy; $("reset").disabled = busy; $("apply").disabled = busy; $("clear").disabled = busy;
   $("replay").disabled = busy || !s.has_recording;
   $("stop").disabled = !(s.status === "running" || s.status === "playing");
   if (document.activeElement !== $("playback")) $("playback").checked = s.playback;
@@ -202,8 +261,24 @@ $("run").onclick = run;
 $("stop").onclick = () => cmd({ cmd: "stop" });
 $("replay").onclick = () => cmd({ cmd: "replay" });
 $("playback").onchange = () => cmd({ cmd: "playback", on: $("playback").checked });
-$("reset").onclick = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
-$("task").onchange = () => cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10) });
+function conditions() {
+  const num = id => parseFloat($(id).value || "0");
+  return { yaw: num("yaw"), height: num("height") / 100, fov: num("fov"), dx: num("dx") / 100, dy: num("dy") / 100 };
+}
+function showCond() {
+  $("yawv").textContent = `${$("yaw").value}°`;
+  $("heightv").textContent = `+${$("height").value} cm`;
+  $("fovv").textContent = `×${parseFloat($("fov").value).toFixed(2)}`;
+}
+function reset(cond) {
+  for (const k of ["yaw", "height", "fov", "dx", "dy"]) $(k).dataset.dirty = "0";
+  cmd({ cmd: "reset", task: $("task").value, init: parseInt($("init").value || "0", 10), ...(cond || conditions()) });
+}
+for (const k of ["yaw", "height", "fov", "dx", "dy"]) $(k).addEventListener("input", () => { $(k).dataset.dirty = "1"; showCond(); });
+$("reset").onclick = () => reset();
+$("task").onchange = () => reset();
+$("apply").onclick = () => reset();
+$("clear").onclick = () => reset({ yaw: 0, height: 0, fov: 1, dx: 0, dy: 0 });
 $("camera").onchange = () => cmd({ cmd: "camera", name: $("camera").value });
 $("prompt").addEventListener("keydown", e => { if (e.key === "Enter" && (e.ctrlKey || e.metaKey)) { e.preventDefault(); run(); } });
 poll();

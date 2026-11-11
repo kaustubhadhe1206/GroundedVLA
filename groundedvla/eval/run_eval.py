@@ -35,6 +35,20 @@ def val_init_states(manifest: dict, task_key: str, paths: dict) -> list[np.ndarr
         return [f["data"][name]["states"][0] for name in d["val"]]
 
 
+def run_identity(cfg: dict, policy: str, checkpoint: str | None, name: str | None) -> dict:
+    """What a record belongs to: `label` = variant config (pooled in reports), `run` = one training
+    run of it (one seed). Read from the checkpoint's train_config.yaml when there is one.
+    Pipeline-check models (smolvla_libero, replay, ...) are labelled by their registry name."""
+    if policy != "smolvla_ckpt":
+        return {"label": policy, "run": name or policy, "train_seed": None, "model_variant": policy}
+    train_cfg = cfg
+    if checkpoint and (Path(checkpoint) / "train_config.yaml").exists():
+        train_cfg = yaml.safe_load((Path(checkpoint) / "train_config.yaml").read_text())
+    run = name or (Path(checkpoint).parent.name if checkpoint and Path(checkpoint).name.startswith("step_") else cfg["name"])
+    return {"label": train_cfg["name"], "run": run, "train_seed": train_cfg["train"]["seed"],
+            "model_variant": train_cfg["model"]["variant"]}
+
+
 def done_episodes(path: Path) -> set[int]:
     if not path.exists():
         return set()
@@ -54,6 +68,8 @@ def main():
     ap.add_argument("--split", default="test", choices=["test", "val"],
                     help="test: LIBERO's fixed init states (+ OOD); val: validation-demo init states (selection)")
     ap.add_argument("--tag", default=None, help="sub-folder for this run, e.g. step_010000_N10")
+    ap.add_argument("--name", default=None,
+                    help="training run name, e.g. v1_rgb_s1 (default: from the checkpoint, else the config name)")
     ap.add_argument("--no-video", action="store_true")
     ap.add_argument("--wandb", action="store_true", help="also log each episode to Weights & Biases")
     args = ap.parse_args()
@@ -64,7 +80,8 @@ def main():
     conditions = {"in_distribution": {}} if args.split == "test" else {"val": {}}
     if args.eval_config and args.split == "test":
         conditions.update(yaml.safe_load(Path(args.eval_config).read_text())["conditions"])
-    out_dir = Path(paths["outputs"]) / "eval" / cfg["name"] / args.policy
+    ident = run_identity(cfg, args.policy, args.checkpoint, args.name)
+    out_dir = Path(paths["outputs"]) / "eval" / ident["run"] / args.policy
     if args.tag:
         out_dir = out_dir / args.tag
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -86,11 +103,25 @@ def main():
         spec = TASKS[task_key]
         policy = build_policy(args.policy, spec, paths, checkpoint=args.checkpoint)
         for cond_name, cond in conditions.items():
+            if "tasks" in cond and task_key not in cond["tasks"]:
+                continue
+            if "init_states" in cond and cond["init_states"] not in manifest.get("ood", {}):
+                # never run these with the default states: they would be logged as OOD but be in-distribution
+                print(f"skip {task_key} {cond_name}: OOD initial states not generated yet (ood/make_ood_states.py)")
+                continue
+            paraphrases = None
+            if "paraphrases" in cond:
+                paraphrases = [p for p in json.loads((REPO_ROOT / cond["paraphrases"]).read_text()).get(task_key, [])
+                               if p and p != "TODO"]
+                if not paraphrases:
+                    print(f"skip {task_key} {cond_name}: no paraphrases written for {task_key} yet")
+                    continue
             log = out_dir / f"{task_key}_{cond_name}.jsonl"
             finished = done_episodes(log)
             pert = CameraPerturbation(**cond["camera"]) if "camera" in cond else None
-            # TODO(Week 3): position/scene OOD init states from split_manifest["ood"]
             env = LiberoWrapper(spec, with_depth_seg=cfg["model"]["variant"] != "v1", camera_perturbation=pert)
+            if "init_states" in cond:
+                raise NotImplementedError("loading OOD initial states from the manifest (Week 3)")
             init_states = env.init_states() if args.split == "test" else val_init_states(manifest, task_key, paths)
             default_n = cfg["eval"]["rollouts_per_task"] if args.split == "test" else manifest["val_rollouts_per_task"]
             n = args.episodes or cond.get("rollouts", default_n)
@@ -99,10 +130,13 @@ def main():
                     continue
                 init = policy.begin_episode(i)
                 init = init_states[i % len(init_states)] if init is None else init
+                if paraphrases:                          # language OOD: same scene, reworded instruction
+                    env._instruction = paraphrases[i % len(paraphrases)]
                 video = None if args.no_video else out_dir / "videos" / f"{task_key}_{cond_name}_ep{i:03d}.mp4"
                 r = run_episode(env, policy, executor, init_state=init, max_steps=spec.max_steps,
                                 seed=base_seed + i, condition=cond_name, episode_idx=i, video_path=video)
-                record = r.to_dict() | {"mode": mode, "horizon": horizon if mode == "naive" else None}
+                record = r.to_dict() | {"mode": mode, "horizon": horizon if mode == "naive" else None,
+                                        "split": args.split} | ident
                 with open(log, "a") as f:
                     f.write(json.dumps(record) + "\n")
                 if wandb_run is not None:

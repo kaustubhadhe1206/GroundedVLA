@@ -29,3 +29,33 @@ def test_resume_ignores_weights_only_and_temporary(tmp_path):
 def test_split_episodes_are_disjoint(tmp_path):
     (tmp_path / "splits.json").write_text('{"T1": {"train": [0, 1], "val": [2]}, "T2": {"train": [3], "val": [4]}}')
     assert split_episodes(tmp_path, ["T1", "T2"]) == ([0, 1, 3], [2, 4])
+
+
+def test_augmentation_changes_only_agentview_and_keeps_range():
+    import torch
+
+    from groundedvla.train.train import make_augmentation
+
+    cfg = {"model": {"image_keys": ["observation.images.image", "observation.images.image2"]},
+           "train": {"augment": {"keys": ["observation.images.image"], "prob": 1.0,
+                                 "affine": {"degrees": 8, "translate": 0.08, "scale": [0.9, 1.1], "shear": 5},
+                                 "color_jitter": {"brightness": 0.2}}}}
+    aug = make_augmentation(cfg)
+    batch = {"observation.images.image": torch.rand(4, 3, 64, 64), "observation.images.image2": torch.rand(4, 3, 64, 64)}
+    wrist = batch["observation.images.image2"].clone()
+    agent = batch["observation.images.image"].clone()
+    out = aug(batch)
+    assert torch.equal(out["observation.images.image2"], wrist)
+    assert not torch.equal(out["observation.images.image"], agent)
+    assert out["observation.images.image"].min() >= 0 and out["observation.images.image"].max() <= 1
+
+
+def test_augmentation_refuses_mask_variants():
+    import pytest
+
+    from groundedvla.train.train import make_augmentation
+
+    cfg = {"model": {"image_keys": ["observation.images.image", "observation.images.mask"]},
+           "train": {"augment": {"color_jitter": {"brightness": 0.2}}}}
+    with pytest.raises(ValueError):
+        make_augmentation(cfg)

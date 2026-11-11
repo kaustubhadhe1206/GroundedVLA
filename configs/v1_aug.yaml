@@ -1,0 +1,49 @@
+# V1 + camera/color augmentation (improvement 4): does plain data augmentation buy the same
+# viewpoint robustness as 3D grounding? Identical to v1_rgb except `name` and `train.augment`.
+name: v1_aug
+tasks: [T1, T2, T3, T4]
+
+data:
+  repo_id: local/gvla_libero
+  manifest: groundedvla/data/split_manifest.json
+
+model:
+  variant: v1
+  image_keys: [observation.images.image, observation.images.image2]
+  use_grounding: false
+  freeze_vision_encoder: true
+  train_expert_only: true
+  chunk_size: 50
+
+train:
+  seed: 0
+  steps: 20000
+  batch_size: 32
+  lr: 1.0e-4
+  weight_decay: 1.0e-10
+  warmup_steps: 1000
+  scheduler: cosine
+  precision: bf16
+  checkpoint_every: 2000
+  log_every: 100
+  val_every: 1000
+  val_batches: 25             # x batch_size frames of the val demos (5 per task)
+  num_workers: 8
+  select_from_steps: [10000, 15000, 20000]
+  augment:                     # agentview only: the camera our viewpoint OOD conditions move
+    keys: [observation.images.image]
+    prob: 0.8                  # share of samples augmented
+    affine: {degrees: 8, translate: 0.08, scale: [0.9, 1.1], shear: 5}
+    perspective: 0.15          # distortion scale, applied with perspective_p
+    perspective_p: 0.5
+    color_jitter: {brightness: 0.2, contrast: 0.2, saturation: 0.2, hue: 0.03}
+
+eval:
+  mode: naive                  # naive | temporal_ensemble (compared in B1, then fixed)
+  execution_horizon: 10        # tuned in B1 over {5, 10, 25}, then fixed for all variants
+  te_m: 0.01
+  rollouts_per_task: 50
+  seed: 2000
+
+logging:
+  wandb_project: groundedvla

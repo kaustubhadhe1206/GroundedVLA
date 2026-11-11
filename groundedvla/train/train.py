@@ -106,6 +106,52 @@ def policy_class(variant: str):
     raise NotImplementedError("V3 training is wired up in Step B2 (grounded_smolvla.py)")
 
 
+# ----------------------------------------------------------------------------- augmentation
+class ImageAugmentation:
+    """Per-sample camera-style augmentation for the V1+aug baseline (plan Step B5 / improvement 4).
+
+    Random affine (rotation, shift, scale, shear) + perspective warp approximate a moved camera;
+    color jitter covers lighting. Applied only to `keys` (the agentview by default, the camera our
+    viewpoint OOD conditions move), on the GPU after the preprocessor, training batches only.
+    """
+
+    def __init__(self, keys: list[str], spec: dict):
+        from torchvision.transforms import v2
+
+        a, ops = spec.get("affine"), []
+        if a:
+            ops.append(v2.RandomAffine(degrees=a.get("degrees", 0), translate=(a.get("translate", 0),) * 2,
+                                       scale=tuple(a.get("scale", (1, 1))), shear=a.get("shear", 0)))
+        if spec.get("perspective"):
+            ops.append(v2.RandomPerspective(distortion_scale=spec["perspective"], p=spec.get("perspective_p", 0.5)))
+        if spec.get("color_jitter"):
+            c = spec["color_jitter"]
+            ops.append(v2.ColorJitter(c.get("brightness", 0), c.get("contrast", 0), c.get("saturation", 0), c.get("hue", 0)))
+        self.keys, self.prob = keys, spec.get("prob", 1.0)
+        self.transform = v2.Compose(ops)
+
+    def __call__(self, batch: dict) -> dict:
+        for k in self.keys:
+            imgs = batch[k]
+            out = imgs.clone()
+            for i in range(imgs.shape[0]):                 # per-sample random parameters
+                if torch.rand(()) < self.prob:
+                    out[i] = self.transform(imgs[i]).clamp_(0, 1)
+            batch[k] = out
+        return batch
+
+
+def make_augmentation(cfg: dict) -> ImageAugmentation | None:
+    spec = cfg["train"].get("augment")
+    if not spec:
+        return None
+    keys = spec.get("keys", ["observation.images.image"])
+    if "observation.images.mask" in cfg["model"]["image_keys"]:
+        # the mask would need the same geometric transform as the agentview; not supported
+        raise ValueError("image augmentation is only for the RGB-only baseline (no mask input)")
+    return ImageAugmentation(keys, spec)
+
+
 # ----------------------------------------------------------------------------- checkpoints
 def list_checkpoints(run_dir: Path) -> list[Path]:
     return sorted(run_dir.glob("step_*"), key=lambda p: int(p.name.split("_")[1]))
@@ -185,7 +231,9 @@ def main():
 
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
-    ap.add_argument("--run-name", default=None, help="default: config name")
+    ap.add_argument("--seed", type=int, default=None,
+                    help="training seed (default: config); a non-default seed trains run <name>_s<seed>")
+    ap.add_argument("--run-name", default=None, help="default: config name (+ _s<seed>)")
     ap.add_argument("--max-steps", type=int, default=None, help="stop early (throughput test); schedule unchanged")
     ap.add_argument("--batch-size", type=int, default=None)
     ap.add_argument("--num-workers", type=int, default=None)
@@ -198,6 +246,9 @@ def main():
 
     cfg = yaml.safe_load(Path(args.config).read_text())
     t = cfg["train"]
+    default_seed = t["seed"]
+    if args.seed is not None:
+        t["seed"] = args.seed               # saved into every checkpoint's train_config.yaml
     paths = load_paths()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     use_bf16 = t.get("precision") == "bf16" and device == "cuda" and torch.cuda.is_bf16_supported()
@@ -205,8 +256,11 @@ def main():
     num_workers = t.get("num_workers", 8) if args.num_workers is None else args.num_workers
     total_steps = t["steps"]
     stop_step = min(total_steps, args.max_steps or total_steps)
-    run_name = args.run_name or cfg["name"]
+    run_name = args.run_name or (cfg["name"] if t["seed"] == default_seed else f"{cfg['name']}_s{t['seed']}")
     run_dir = Path(paths["checkpoints"]) / run_name
+    augment = make_augmentation(cfg)
+    if augment is not None:
+        print(f"[train] augmenting {augment.keys} per sample: {augment.transform}")
     run_dir.mkdir(parents=True, exist_ok=True)
 
     from groundedvla.utils.colab import commit_hash
@@ -278,6 +332,8 @@ def main():
         batch = next(batches)
         data_s += time.perf_counter() - t_data
         batch = pre(batch)
+        if augment is not None:
+            batch = augment(batch)
         with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
             loss, _ = policy.forward(batch)
         loss.backward()

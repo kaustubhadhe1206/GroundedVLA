@@ -1,6 +1,6 @@
 # V3: RGB + mask + 3D grounding tokens. Identical to v2 except `model`.
 name: v3_grounded
-tasks: [T1, T2, T3]
+tasks: [T1, T2, T3, T4]
 
 data:
   repo_id: local/gvla_libero
@@ -32,7 +32,7 @@ train:
   checkpoint_every: 2000
   log_every: 100
   val_every: 1000
-  val_batches: 25             # x batch_size frames of the 15 val demos
+  val_batches: 25             # x batch_size frames of the val demos (5 per task)
   num_workers: 8
   select_from_steps: [10000, 15000, 20000]
 

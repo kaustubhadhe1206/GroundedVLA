@@ -90,6 +90,15 @@ class CameraView:
         return robust_center(self.points(inst_id))
 
 
+def mask_centroid(mask: np.ndarray, depth: np.ndarray, K: np.ndarray, T_cam_to_base: np.ndarray) -> np.ndarray | None:
+    """Robust robot-frame center from any boolean mask (e.g. a predicted one, perception.py).
+    mask and depth (meters) in OpenCV pixel order; None if < MIN_VISIBLE_PIXELS."""
+    pix = np.argwhere(mask)
+    if len(pix) < MIN_VISIBLE_PIXELS:
+        return None
+    return robust_center(cu.transform(T_cam_to_base, cu.backproject(depth, pix, K)))
+
+
 def object_centroid(sim, raw_obs: dict, inst_id: int, camera: str = "agentview") -> np.ndarray | None:
     return CameraView.from_obs(sim, raw_obs, camera).centroid(inst_id)
 

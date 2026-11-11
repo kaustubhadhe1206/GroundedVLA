@@ -102,7 +102,7 @@ def test_failure_labels_follow_plan_order():
 
 
 def test_degradation():
-    rows = [{"variant": "v1", "task": "T1", "condition": "in_distribution", "success": 0.9},
-            {"variant": "v1", "task": "T1", "condition": "yaw_p20", "success": 0.6}]
+    rows = [{"label": "v1", "task": "T1", "condition": "in_distribution", "success": 0.9},
+            {"label": "v1", "task": "T1", "condition": "yaw_p20", "success": 0.6}]
     add_degradation(rows)
     assert rows[0]["degradation"] == 0.0 and abs(rows[1]["degradation"] - 0.3) < 1e-9

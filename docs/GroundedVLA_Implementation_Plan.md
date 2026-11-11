@@ -852,3 +852,39 @@ Use during the internal review before submission.
 - **Evaluation takes too long:** measure time per episode in Week 2, then use the Tier 2 cuts in Section 6.5.
 - **C drive fills up:** follow Section 2.5, set cache variables before any install, and compare free space on C before and after each major download.
 - **Time overrun:** drop T4, then the stretch ablation, then Tier 2 conditions. Keep V1, V3, matched evaluation, and the proposal metrics.
+
+---
+
+## 12. Improvements Added Nov 10
+
+Five additions agreed on Nov 10, before any variant was trained, so every variant uses them.
+
+### 12.1 T4 in training (language must matter)
+
+T3 ("put the bowl on the stove") and T4 ("put the bowl on the plate") share the same kitchen scene and bowl. Only the instruction tells the policy where to go, so with both in training, a policy that ignores language can't exceed about 50% on them. This directly tests destination grounding. All configs now train on T1–T4. The T1–T3 splits are unchanged, because the manifest's seeded generator walks the tasks in order and T4 is appended.
+
+### 12.2 Stronger statistics
+
+- 50 rollouts per task for in-distribution and the Tier 1 conditions (Section 6.5), as planned.
+- A second training seed for V1 and V3: `03_train` with `SEED = 1` trains runs `v1_rgb_s1` and `v3_grounded_s1`.
+- Every evaluation record carries `label` (variant), `run` and `train_seed`. `report.py` pools seeds per variant and shows the between-seed spread.
+- **Paired comparison** (`report.py --compare A B`): all variants run the same initial states and seeds, so episodes are matched on (task, condition, episode, seed). The success difference is bootstrapped over matched pairs (95% CI) and the discordant pairs are counted. This is the main statistical test of the report.
+- Conditions that need generated OOD initial states are skipped until `make_ood_states.py` fills the manifest, so they can never be logged as OOD while actually being in-distribution.
+
+### 12.3 Demo upgrade
+
+`.\demo` has test-condition controls: camera yaw, height and FOV, plus a target shift in cm. A `--compare` mode runs two checkpoints from the identical scene and plays them back side by side with their outcomes. This is the presentation's key visual: V1 vs V3 with the camera rotated.
+
+### 12.4 Augmentation baseline (`v1_aug`)
+
+V1 plus random affine, perspective and color jitter on the agentview image (`configs/v1_aug.yaml`; 80% of samples, per-sample parameters, on the GPU). It answers the obvious reviewer question: does plain data augmentation buy the same viewpoint robustness as 3D grounding? It is identical to `v1_rgb` apart from `train.augment`, and is compared with `report.py --compare v3_grounded v1_aug`.
+
+### 12.5 Instruction-predicted masks (removing the oracle)
+
+`grounding/perception.py` replaces the simulator's target and destination identity with perception that reads the instruction:
+1. A rule-based parser extracts the target, the spatial relation and the destination. It also handles the paraphrase wordings.
+2. Grounding DINO (open-vocabulary detection) finds every noun in the instruction.
+3. The spatial relation ("between", "next to", "on") is resolved geometrically on the candidates' 3D positions, since detectors can't tell two identical bowls apart.
+4. SAM segments the chosen boxes.
+
+Depth and calibration still come from the simulator. `eval_perception.py` measures correct-object rate, mask IoU and 3D center error against ground truth on the debug demos. The planned use is a V2/V3 evaluation condition with predicted instead of oracle masks, wired into the V2/V3 runner in Step B2.

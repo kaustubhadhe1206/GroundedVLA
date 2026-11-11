@@ -44,9 +44,17 @@ OpenVLA-7B needs about 16 GB of GPU memory and its own environment, so run it on
 ```powershell
 .\demo smolvla_libero --task T1
 .\demo smolvla_ckpt --checkpoint D:\groundedvla\checkpoints\v1_rgb\step_020000 --horizon 10 --task T3
+# two models side by side on the identical scene (e.g. V1 vs V3 with the camera rotated)
+.\demo smolvla_ckpt --checkpoint <v1 step dir> --label V1 --compare smolvla_ckpt --compare-checkpoint <v3 step dir> --compare-label V3
 ```
 
-Then open http://127.0.0.1:8765. The left side has the scene picker (T1–T4, initial state), an instruction box with one-click suggestions, status and progress, the scene goal, and the two images the model sees. The right side shows the live simulator, with any scene camera (agentview, frontview, sideview, ...).
+Then open http://127.0.0.1:8765. The left side has:
+- the scene picker (T1–T4, initial state)
+- **test conditions**: camera yaw, height and field of view, and a target shift in cm, all applied on reset
+- an instruction box with one-click suggestions (the trained instruction and its paraphrases)
+- status and progress, per-model results, the scene goal, and the two images the model sees
+
+The right side shows the live simulator with any scene camera (agentview, frontview, sideview, ...). When comparing, both models run from the identical scene, one after the other, and play back side by side with their outcome.
 
 - The robot only moves after you press **Run** (Ctrl+Enter).
 - A later prompt continues from the current state until you press **Reset**.
@@ -109,7 +117,17 @@ Everything lives on `D:\groundedvla` (plan Section 2.5). The code in this repo i
 | `01_pipeline_check.ipynb` | A3: `smolvla_base` and `smolvla_libero` rollouts with videos | A100 (T4 is slower) |
 | `01b_openvla_pipeline_check.ipynb` | A3: OpenVLA-7B rollouts, **separate runtime** | A100 |
 | `02_build_dataset.ipynb` | A5: masks, 3D grounding and LeRobot dataset; A6 and A7 checks | T4 is enough |
-| `03_train.ipynb` | B1/B3: throughput test, training with auto-resume, checkpoint selection, horizon tuning, first test | A100 |
+| `03_train.ipynb` | B1/B3: throughput test, training with auto-resume, checkpoint selection, horizon tuning, first test; `CONFIG` picks the variant, `SEED` the training seed | A100 |
+| `04_eval.ipynb` | B4: every condition in `configs/eval_ood.yaml` for one run, then the report and paired comparisons across runs | A100 |
+
+Training runs (each with the same data, budget and evaluation):
+
+| Run | Config | Purpose |
+|---|---|---|
+| `v1_rgb`, `v1_rgb_s1` | `v1_rgb.yaml` (seeds 0, 1) | RGB baseline |
+| `v1_aug` | `v1_aug.yaml` | RGB + camera/color augmentation: does plain augmentation buy the same robustness as 3D? |
+| `v2_mask` | `v2_mask.yaml` | + target/destination mask (object identity) |
+| `v3_grounded`, `v3_grounded_s1` | `v3_grounded.yaml` (seeds 0, 1) | + 3D grounding tokens |
 
 Datasets and weights are copied from Drive to `/content/local` before use (Drive is slow for many small reads). Checkpoints and results are written back to Drive.
 
@@ -123,6 +141,8 @@ See plan Section 4. Main entry points:
 - `groundedvla/eval/report.py`: summary tables with 95% confidence intervals
 - `groundedvla/data/replay_demos.py`, `make_split_manifest.py`, `convert_to_lerobot.py`, `check_dataset.py`: the dataset build, run in that order
 - `groundedvla/grounding/check_grounding.py`: grounding accuracy and camera invariance checks
+- `groundedvla/grounding/perception.py`, `eval_perception.py`: masks predicted from the instruction (Grounding DINO + spatial relation + SAM) instead of the simulator's, and their accuracy
+- `groundedvla/eval/report.py --compare A B`: paired success difference on matched episodes with a bootstrap 95% CI
 - `groundedvla/envs/compat.py`: rendering backend plus the robosuite/NumPy 2 segmentation fix (imported automatically)
 
 ## Acknowledgments
