@@ -888,3 +888,18 @@ V1 plus random affine, perspective and color jitter on the agentview image (`con
 4. SAM segments the chosen boxes.
 
 Depth and calibration still come from the simulator. `eval_perception.py` measures correct-object rate, mask IoU and 3D center error against ground truth on the debug demos. The planned use is a V2/V3 evaluation condition with predicted instead of oracle masks, wired into the V2/V3 runner in Step B2.
+
+Verified Nov 10 (`eval_perception.py`, debug demos, frames from the first quarter of each demo, before the grasp):
+
+| Task | Correct object | IoU target / dest | Center error target / dest | Time per frame |
+|---|---|---|---|---|
+| T1 | 100% (20 frames) | 0.96 / 0.96 | 0.5 / 0.5 cm | 2.9 s |
+| T2 | 90% (20) | 0.94 / 0.96 | 0.6 / 0.5 cm | 2.4 s |
+| T3 | 100% (20) | 0.97 / 0.86 | 0.5 / 6.0 cm | 2.9 s |
+| T4 | 100% (16) | 0.97 / 0.96 | 0.5 / 0.5 cm | 2.0 s |
+
+Times are on the laptop's RTX 3050.
+- The T3 destination error is the stove-base issue from A6.
+- Getting there took three fixes, each found from the overlays: Grounding DINO base instead of tiny (tiny confused bowls and plates), choosing boxes from the full noun score matrix instead of the detector's merged labels, and detector prompts for unusual names ("ramekin" → "small metal cup", "cookie box" → "snack box") plus decoy phrases (robot arm, cabinet, stove).
+- **Caveat:** the prompt choices were probed on 3 of these 5 demos, so this table is slightly optimistic. The unbiased test is V3 with predicted masks on LIBERO's test states.
+- At about 2–3 s per frame on the laptop, rollouts should run perception at episode start and then periodically, not every step.

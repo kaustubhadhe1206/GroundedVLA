@@ -77,6 +77,21 @@ def test_next_to_picks_the_closest_bowl():
     assert resolve_target(p, [0, 1], centers, scores, anchors) == 1
 
 
+def test_assign_handles_bowls_that_look_like_plates():
+    from groundedvla.grounding.perception import assign
+
+    p = parse_instruction("pick up the black bowl between the plate and the ramekin and place it on the plate")
+    nouns = p.nouns                                   # [black bowl, plate, ramekin]
+    # boxes: 0 real plate, 1 bowl A, 2 bowl B, 3 ramekin. Both bowls score higher as "plate" than "bowl".
+    S = np.array([[0.10, 0.60, 0.05],
+                  [0.30, 0.45, 0.10],
+                  [0.25, 0.40, 0.12],
+                  [0.20, 0.10, 0.50]])
+    unique, cand = assign(S, nouns, p)
+    assert unique == {"plate": 0, "ramekin": 3}
+    assert sorted(cand) == [1, 2]
+
+
 def test_missing_anchor_falls_back_to_score():
     centers, scores, anchors = setup_scene()
     p = ParsedInstruction("black bowl", "plate", "between", ["plate", "teapot"])

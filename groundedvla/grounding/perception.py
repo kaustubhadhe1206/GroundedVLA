@@ -25,11 +25,22 @@ from dataclasses import dataclass, field
 
 import numpy as np
 
-DETECTOR_ID = "IDEA-Research/grounding-dino-tiny"
+DETECTOR_ID = "IDEA-Research/grounding-dino-base"   # tiny confused bowls and plates on these renders
 SAM_ID = "facebook/sam-vit-base"
-BOX_THRESHOLD = 0.25
-TEXT_THRESHOLD = 0.2
+MIN_SCORE = 0.15          # a box is kept if it scores at least this for some noun
+UNIQUE_SCORE = 0.2        # destination / anchors: their best box must score at least this
+TARGET_SCORE = 0.15       # target candidates: boxes scoring at least this for the target noun
 NMS_IOU = 0.5
+MAX_BOX_FRACTION = 0.08   # largest real tabletop object (plate) is ~3% of the image; cabinet 17%, robot 13%
+# What the detector is asked for, per instruction noun. Open-vocabulary detectors know common visual
+# words better than LIBERO's names ("ramekin" landed on the robot arm, the ramekin itself was called a
+# black bowl). The instruction noun is kept for the relation logic; only the detector prompt changes.
+# Probed Nov 10 on base: "cookie box" scored the cabinet 0.58 and the real box 0.15; "snack box" found it
+# in 3/3 demos (0.29-0.35).
+DETECTOR_PROMPTS = {"ramekin": "small metal cup", "black bowl": "bowl", "cookie box": "snack box",
+                    "wooden cabinet": "cabinet"}
+# Decoy phrases: things always in view that would otherwise be matched to a noun; their boxes are dropped.
+DECOY_PROMPTS = ("robot arm", "cabinet", "stove")   # ignored when the instruction names them
 
 _CLAUSE = r"(?P<clause>(?:between|next to|on|in|from) .+?)"
 _PICK = r"(?:pick up|grab|take|move)"
@@ -118,8 +129,33 @@ def nms(boxes: np.ndarray, scores: np.ndarray, iou: float = NMS_IOU) -> list[int
 
 
 def matches(label: str, noun: str) -> bool:
-    """Detector phrase vs. instruction noun: the noun's head word must appear in the label."""
-    return noun.split()[-1] in label.split()
+    """Detector label vs. instruction noun. Labels are single nouns from the instruction (detect),
+    so this is equality, with a head-word fallback ("bowl" for "black bowl")."""
+    return label == noun or noun.split()[-1] == label.split()[-1]
+
+
+def assign(S: np.ndarray, nouns: list[str], parsed: ParsedInstruction) -> tuple[dict, list[int]]:
+    """Boxes for the nouns from the (boxes x nouns) score matrix.
+
+    The destination and the relation's anchors name single objects: each takes the best-scoring free
+    box, most confident noun first, one box per noun. The target may have look-alikes (two black
+    bowls), so every remaining box that scores TARGET_SCORE for it is a candidate; resolve_target
+    picks among them. Returns ({noun: box or None}, target candidates).
+    """
+    used, unique = set(), {}
+    singles = [n for n in dict.fromkeys([parsed.destination, *parsed.anchors]) if n != parsed.target]
+    for n in sorted(singles, key=lambda n: -S[:, nouns.index(n)].max()):
+        col = S[:, nouns.index(n)]
+        free = [i for i in np.argsort(-col) if i not in used and col[i] >= UNIQUE_SCORE]
+        unique[n] = int(free[0]) if free else None
+        if free:
+            used.add(int(free[0]))
+    ti = nouns.index(parsed.target)
+    cand = [i for i in range(len(S)) if i not in used and S[i, ti] >= TARGET_SCORE]
+    if not cand:                                   # weak target evidence: best remaining box
+        rest = [i for i in range(len(S)) if i not in used]
+        cand = [max(rest, key=lambda i: S[i, ti])] if rest else []
+    return unique, cand
 
 
 def resolve_target(parsed: ParsedInstruction, cand: list[int], centers: np.ndarray, scores: np.ndarray,
@@ -182,19 +218,42 @@ class InstructionPerception:
         self.sam_proc = SamProcessor.from_pretrained(sam_path)
         self.sam = SamModel.from_pretrained(sam_path).to(self.device).eval()
 
-    def detect(self, rgb: np.ndarray, nouns: list[str]):
+    def detect(self, rgb: np.ndarray, nouns: list[str]) -> tuple[np.ndarray, np.ndarray]:
+        """Candidate boxes (N, 4) and their score for every noun (N, len(nouns)).
+
+        Grounding DINO scores every box against every text token. Its own post-processing labels a
+        box with all tokens above a threshold, merging phrases ("black bowl ramekin"), and on these
+        small renders it often rates a bowl higher as "plate" than as "bowl". So no label is fixed
+        here: assign() decides from the full score matrix. Dropped: boxes larger than
+        MAX_BOX_FRACTION of the image (robot, cabinet; our tabletop objects are small), boxes that
+        best match a decoy phrase (the robot arm), weak boxes, and duplicates (class-agnostic NMS).
+        """
         from PIL import Image
 
-        image = Image.fromarray(rgb)
-        text = ". ".join(nouns) + "."
-        inputs = self.det_proc(images=image, text=text, return_tensors="pt").to(self.device)
+        prompts = list(dict.fromkeys([DETECTOR_PROMPTS.get(n, n) for n in nouns] + list(DECOY_PROMPTS)))
+        noun_of = {DETECTOR_PROMPTS.get(n, n): n for n in nouns}          # prompt -> instruction noun
+        inputs = self.det_proc(images=Image.fromarray(rgb), text=". ".join(prompts) + ".",
+                               return_tensors="pt").to(self.device)
         with self.torch.no_grad():
             out = self.det(**inputs)
-        res = self.det_proc.post_process_grounded_object_detection(
-            out, inputs.input_ids, threshold=BOX_THRESHOLD, text_threshold=TEXT_THRESHOLD,
-            target_sizes=[rgb.shape[:2]])[0]
-        labels = res.get("text_labels", res.get("labels"))
-        return res["boxes"].cpu().numpy(), res["scores"].cpu().numpy(), [str(l) for l in labels]
+        ids = inputs.input_ids[0].tolist()
+        spans = []                                       # token positions of each prompt phrase
+        for p in prompts:
+            toks = self.det_proc.tokenizer(p, add_special_tokens=False).input_ids
+            start = next(i for i in range(len(ids) - len(toks) + 1) if ids[i:i + len(toks)] == toks)
+            spans.append(list(range(start, start + len(toks))))
+        probs = out.logits[0].sigmoid().cpu().numpy()                                # (queries, tokens)
+        phrase = np.stack([probs[:, s].mean(axis=1) for s in spans], axis=1)         # (queries, prompts)
+        h, w = rgb.shape[:2]
+        cx, cy, bw, bh = out.pred_boxes[0].cpu().numpy().T
+        boxes = np.stack([(cx - bw / 2) * w, (cy - bh / 2) * h, (cx + bw / 2) * w, (cy + bh / 2) * h], axis=1)
+        noun_cols = [prompts.index(DETECTOR_PROMPTS.get(n, n)) for n in nouns]
+        S = phrase[:, noun_cols]                                                     # (queries, nouns)
+        decoy = np.array([prompts[i] not in noun_of for i in phrase.argmax(axis=1)])
+        keep = (S.max(axis=1) > MIN_SCORE) & (bw * bh < MAX_BOX_FRACTION) & ~decoy
+        boxes, S = boxes[keep], S[keep]
+        k = nms(boxes, S.max(axis=1)) if len(boxes) else []
+        return boxes[k], S[k]
 
     def segment(self, rgb: np.ndarray, boxes: list[np.ndarray]) -> list[np.ndarray]:
         from PIL import Image
@@ -214,25 +273,23 @@ class InstructionPerception:
         """centers_fn(boxes) -> (N, 3) robot-frame centers of the boxes (uses depth + calibration)."""
         ms, t = {}, time.perf_counter()
         parsed = parse_instruction(instruction)
-        boxes, scores, labels = self.detect(rgb, parsed.nouns)
+        nouns = parsed.nouns
+        boxes, S = self.detect(rgb, nouns)
         ms["detect"] = (time.perf_counter() - t) * 1e3
-        keep = nms(boxes, scores) if len(boxes) else []
-        boxes, scores, labels = boxes[keep], scores[keep], [labels[i] for i in keep]
         h, w = rgb.shape[:2]
         empty = np.zeros((h, w), bool)
         if not len(boxes):
-            return PerceptionResult(parsed, boxes, labels, scores, None, None, empty, empty.copy(), ms)
+            return PerceptionResult(parsed, boxes, [], np.zeros(0), None, None, empty, empty.copy(), ms)
 
         t = time.perf_counter()
         centers = centers_fn(boxes)
-        best_of = {}
-        for noun in parsed.nouns:
-            idx = [i for i, l in enumerate(labels) if matches(l, noun)]
-            best_of[noun] = max(idx, key=lambda i: scores[i]) if idx else None
-        cand = [i for i, l in enumerate(labels) if matches(l, parsed.target)]
-        target = resolve_target(parsed, cand, centers, scores, best_of) if cand else None
-        dest_cand = [i for i, l in enumerate(labels) if matches(l, parsed.destination) and i != target]
-        dest = max(dest_cand, key=lambda i: scores[i]) if dest_cand else None
+        unique, cand = assign(S, nouns, parsed)
+        ti = nouns.index(parsed.target)
+        target = resolve_target(parsed, cand, centers, S[:, ti], unique) if cand else None
+        dest = unique.get(parsed.destination)
+        labels = [next((n for n, i in unique.items() if i == b), parsed.target if b in cand else "")
+                  for b in range(len(boxes))]
+        scores = np.array([S[b, nouns.index(lab)] if lab else S[b].max() for b, lab in enumerate(labels)])
         ms["resolve"] = (time.perf_counter() - t) * 1e3
 
         t = time.perf_counter()

@@ -9,8 +9,8 @@ A5) and compares with the simulator's ground truth:
   - time per frame
 and saves overlays to <outputs>/perception_checks/<task>.png.
 
-Frames are taken before the grasp (first half of each demo), where target identity matters and the
-target isn't hidden in the gripper.
+Frames are taken before the grasp (first quarter of each demo), where target identity matters and
+the target isn't hidden in the gripper.
 
 Usage:
     python -m groundedvla.grounding.eval_perception --tasks T1 T2 T3 T4
@@ -73,11 +73,14 @@ def main():
     paths = load_paths()
     out_dir = paths["outputs"] / "perception_checks"
     out_dir.mkdir(parents=True, exist_ok=True)
+    # All simulator work first: creating a LIBERO env (OpenGL context) after the vision models are on
+    # the GPU crashed the process silently on Windows.
+    cameras = {key: camera_model(key) for key in args.tasks}
     perception = InstructionPerception(paths, device=args.device)
     summary = {}
 
     for key in args.tasks:
-        K, T = camera_model(key)
+        K, T = cameras[key]
         rows, tiles = [], []
         with h5py.File(paths["replayed"] / f"{key}.hdf5", "r") as f:
             instruction = f.attrs["instruction"]
@@ -86,7 +89,7 @@ def main():
             for name in sorted(demos, key=lambda s: int(s.split("_")[-1])):
                 d = f[name]
                 n = d["agentview_rgb"].shape[0]
-                for t in np.linspace(0, n // 2, args.frames_per_demo).astype(int):
+                for t in np.linspace(0, n // 4, args.frames_per_demo).astype(int):   # before the grasp
                     rgb, depth, seg = d["agentview_rgb"][t], d["agentview_depth"][t], d["agentview_seg"][t]
                     depth_cv = to_cv(depth)
 
