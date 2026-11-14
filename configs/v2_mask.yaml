@@ -1,6 +1,6 @@
 # V2: RGB + target/destination mask image (control). Identical to v1 except `model`.
 name: v2_mask
-tasks: [T1, T2, T3, T4]
+tasks: [T1, T2, T3, T4, T5, T6, T7]
 
 data:
   repo_id: local/gvla_libero

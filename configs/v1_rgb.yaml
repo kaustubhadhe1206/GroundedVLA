@@ -1,6 +1,6 @@
 # V1: RGB baseline. V2/V3 configs must differ ONLY in the `model` block.
 name: v1_rgb
-tasks: [T1, T2, T3, T4]
+tasks: [T1, T2, T3, T4, T5, T6, T7]
 
 data:
   repo_id: local/gvla_libero

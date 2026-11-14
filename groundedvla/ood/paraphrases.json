@@ -1,5 +1,5 @@
 {
-  "_note": "Language OOD (Section 6.4). 3 paraphrases per task with the same meaning, written Nov 10 before any evaluation, never used in training.",
+  "_note": "Language OOD (Section 6.4). 3 paraphrases per task with the same meaning, written before any evaluation (T1-T4 Nov 10, T5-T7 Nov 13), never used in training.",
   "T1": [
     "grab the black bowl sitting between the plate and the ramekin and put it onto the plate",
     "take the black bowl that is between the ramekin and the plate and set it on the plate",
@@ -19,5 +19,20 @@
     "place the bowl on top of the plate",
     "move the bowl onto the plate",
     "set the bowl down on the plate"
+  ],
+  "T5": [
+    "take the black bowl out of the top drawer of the wooden cabinet and put it on the plate",
+    "grab the black bowl sitting in the top drawer of the wooden cabinet and set it on the plate",
+    "move the black bowl in the top drawer of the wooden cabinet onto the plate"
+  ],
+  "T6": [
+    "pull open the top drawer and place the bowl inside it",
+    "open the top drawer and put the bowl in it",
+    "open the top drawer of the cabinet and put the bowl inside"
+  ],
+  "T7": [
+    "place the wine bottle on top of the cabinet",
+    "move the wine bottle onto the cabinet",
+    "set the wine bottle down on top of the cabinet"
   ]
 }

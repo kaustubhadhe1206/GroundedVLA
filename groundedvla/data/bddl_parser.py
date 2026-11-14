@@ -9,7 +9,7 @@ from pathlib import Path
 
 _GOAL_RE = re.compile(r"\(:goal\s*\(And\s*\((On|In)\s+([^\s()]+)\s+([^\s()]+)\)\s*\)\s*\)", re.S)
 _LANG_RE = re.compile(r"\(:language\s+([^)]+)\)")
-_REGION_SUFFIXES = ("_cook_region", "_contain_region", "_top_region", "_region")
+_REGION_SUFFIXES = ("_cook_region", "_contain_region", "_top_region", "_top_side", "_region")
 
 
 @dataclass(frozen=True)

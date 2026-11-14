@@ -12,6 +12,13 @@ conditions:
   fov_p10:     {tier: 2, rollouts: 25, camera: {fov_scale: 1.10}}
   paraphrase:  {tier: 2, rollouts: 25, paraphrases: groundedvla/ood/paraphrases.json}
 
+# Scope extension tasks (Nov 13): only these conditions, at most this many rollouts each, to fit the
+# compute budget. In-distribution is always run.
+light_eval:
+  tasks: [T5, T6, T7]
+  conditions: [yaw_p20, yaw_m20]
+  rollouts: 25
+
 # B5 ablations (V3 checkpoint only; ID, pos_large, yaw +/-20)
 ablations:
   noisy_grounding_cm: [1, 3, 5]

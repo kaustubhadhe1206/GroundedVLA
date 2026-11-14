@@ -43,6 +43,9 @@
   .dot.idle { background: var(--ok); }
   .dot.loading { background: var(--accent); animation: pulse 1s infinite; }
   .dot.playing { background: var(--accent); }
+  .match { font-size: 12.5px; margin-top: 8px; padding: 6px 8px; border-radius: 6px; display: none; }
+  .match.ok { display: block; background: rgba(62,207,142,.12); color: var(--ok); }
+  .match.no { display: block; background: rgba(245,184,75,.12); color: var(--warn); }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 14px; }
   .grid2 label { display: flex; flex-direction: column; gap: 4px; font-size: 12.5px; color: var(--muted); }
   .grid2 output { color: var(--text); }
@@ -128,6 +131,11 @@
       <label class="toggle" title="The model needs ~1 s per step on a laptop GPU. Smooth playback computes the run first, then plays it at the real 20 Hz.">
         <input type="checkbox" id="playback"> Smooth playback <span class="sub">(compute first, then play at real speed)</span>
       </label>
+      <label class="toggle" title="Policies only know their trained skills. When on, your words are matched to one of this scene's skills; the policy gets that skill's instruction and success is that skill's goal.">
+        <input type="checkbox" id="interpret"> Map my words to a trained skill
+      </label>
+      <div class="match" id="match"></div>
+      <div class="kv">Skills in this scene: <span id="skills">–</span></div>
       <div class="sub" style="margin-top:4px">Ctrl+Enter to run</div>
       <div class="sugg" id="sugg"></div>
     </section>
@@ -231,6 +239,12 @@ function render(s) {
   $("replay").disabled = busy || !s.has_recording;
   $("stop").disabled = !(s.status === "running" || s.status === "playing");
   if (document.activeElement !== $("playback")) $("playback").checked = s.playback;
+  if (document.activeElement !== $("interpret")) $("interpret").checked = s.interpret;
+  $("skills").textContent = s.skills.map(k => k.task).join(", ") || "–";
+  const m = s.match;
+  $("match").className = "match" + (m ? (m.task ? " ok" : " no") : "");
+  $("match").textContent = !m ? "" : m.task ? `Understood as ${m.task}: "${m.instruction}"`
+                                            : `No trained skill fits (${m.reason}). Sent as typed, no goal check.`;
   $("banner").style.display = s.prompt && (s.status === "running" || s.status === "playing") ? "block" : "none";
   $("bannertext").textContent = s.prompt;
 
@@ -261,6 +275,7 @@ $("run").onclick = run;
 $("stop").onclick = () => cmd({ cmd: "stop" });
 $("replay").onclick = () => cmd({ cmd: "replay" });
 $("playback").onchange = () => cmd({ cmd: "playback", on: $("playback").checked });
+$("interpret").onchange = () => cmd({ cmd: "interpret", on: $("interpret").checked });
 function conditions() {
   const num = id => parseFloat($(id).value || "0");
   return { yaw: num("yaw"), height: num("height") / 100, fov: num("fov"), dx: num("dx") / 100, dy: num("dy") / 100 };

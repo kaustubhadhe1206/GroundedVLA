@@ -1,7 +1,7 @@
 # V1 + camera/color augmentation (improvement 4): does plain data augmentation buy the same
 # viewpoint robustness as 3D grounding? Identical to v1_rgb except `name` and `train.augment`.
 name: v1_aug
-tasks: [T1, T2, T3, T4]
+tasks: [T1, T2, T3, T4, T5, T6, T7]
 
 data:
   repo_id: local/gvla_libero

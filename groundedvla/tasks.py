@@ -16,8 +16,13 @@ TASKS = {
     "T2": TaskSpec("T2", "libero_spatial",
                    "pick_up_the_black_bowl_next_to_the_cookie_box_and_place_it_on_the_plate", 220),
     "T3": TaskSpec("T3", "libero_goal", "put_the_bowl_on_the_stove", 300),
-    # Optional: same scene as T3, different destination.
+    # Same scene as T3, different destination: only the instruction tells them apart.
     "T4": TaskSpec("T4", "libero_goal", "put_the_bowl_on_the_plate", 300),
+    # Scope extension (Nov 13): drawers and a bottle. Lighter evaluation (configs/eval_ood.yaml).
+    "T5": TaskSpec("T5", "libero_spatial",
+                   "pick_up_the_black_bowl_in_the_top_drawer_of_the_wooden_cabinet_and_place_it_on_the_plate", 220),
+    "T6": TaskSpec("T6", "libero_goal", "open_the_top_drawer_and_put_the_bowl_inside", 300),
+    "T7": TaskSpec("T7", "libero_goal", "put_the_wine_bottle_on_top_of_the_cabinet", 300),
 }
 
 # Episode limits per suite (OpenVLA / LIBERO evaluation convention).

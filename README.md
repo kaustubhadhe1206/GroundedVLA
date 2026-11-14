@@ -49,7 +49,7 @@ OpenVLA-7B needs about 16 GB of GPU memory and its own environment, so run it on
 ```
 
 Then open http://127.0.0.1:8765. The left side has:
-- the scene picker (T1–T4, initial state)
+- the scene picker (T1–T7, initial state)
 - **test conditions**: camera yaw, height and field of view, and a target shift in cm, all applied on reset
 - an instruction box with one-click suggestions (the trained instruction and its paraphrases)
 - status and progress, per-model results, the scene goal, and the two images the model sees
@@ -60,7 +60,10 @@ The right side shows the live simulator with any scene camera (agentview, frontv
 - A later prompt continues from the current state until you press **Reset**.
 - **Stop** ends the current instruction.
 
-The prompt replaces the task instruction word for word. Policies only know the instructions they were trained on, so other prompts show their limits. "Scene goal satisfied" checks the scene's BDDL goal, whatever the prompt says.
+**Free-form prompts.** Policies can only perform skills they were trained on. With **Map my words to a trained skill** (on by default), the prompt is parsed into an object and a destination, then matched against this scene's skills. The kitchen scene has T3, T4, T6 and T7; a spatial scene has only its own task.
+- If both the object and the destination agree with a skill, the policy gets that skill's trained instruction, and "goal satisfied" checks that skill's goal. For example, "stick the bowl into the top drawer" in the kitchen is understood as T6.
+- Otherwise the page says no trained skill fits, the prompt goes to the policy as typed, and there is no goal check. For example, "put the bowl on top of the cabinet" fails because there is no bowl-on-cabinet skill.
+- With the box unticked, the prompt is sent word for word and the scene's own goal is checked.
 
 Speed: a policy call takes about 0.8 s on the laptop's RTX 3050, and `smolvla_libero` re-plans every step, so live motion runs at about 1 step/s. With **Smooth playback** (on by default) the run is computed first, with a live preview and a progress bar, then played at the real 20 Hz. **Replay** plays the last run again, which is handy for screen recording. Untick the box, or pass `--live`, to watch each step as it is computed. Our checkpoints with N = 10 plan 10 steps per call, so they are about 10× faster.
 
@@ -71,7 +74,12 @@ Speed: a policy call takes about 0.8 s on the laptop's RTX 3050, and `smolvla_li
 | T1 | libero_spatial | pick up the black bowl between the plate and the ramekin and place it on the plate | 220 |
 | T2 | libero_spatial | pick up the black bowl next to the cookie box and place it on the plate | 220 |
 | T3 | libero_goal | put the bowl on the stove | 300 |
-| T4 (optional) | libero_goal | put the bowl on the plate | 300 |
+| T4 | libero_goal | put the bowl on the plate | 300 |
+| T5 | libero_spatial | pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate | 220 |
+| T6 | libero_goal | open the top drawer and put the bowl inside | 300 |
+| T7 | libero_goal | put the wine bottle on top of the cabinet | 300 |
+
+T3, T4, T6 and T7 share one kitchen scene: same objects, different goals, so only the instruction says which skill to do. T5–T7 (added Nov 13) get a lighter evaluation: in-distribution and camera yaw ±20°, 25 rollouts each (`light_eval` in `configs/eval_ood.yaml`).
 
 ## Observation and action format
 

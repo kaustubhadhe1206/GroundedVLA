@@ -38,13 +38,16 @@ MAX_BOX_FRACTION = 0.08   # largest real tabletop object (plate) is ~3% of the i
 # Probed Nov 10 on base: "cookie box" scored the cabinet 0.58 and the real box 0.15; "snack box" found it
 # in 3/3 demos (0.29-0.35).
 DETECTOR_PROMPTS = {"ramekin": "small metal cup", "black bowl": "bowl", "cookie box": "snack box",
-                    "wooden cabinet": "cabinet"}
+                    "wooden cabinet": "cabinet", "top drawer": "drawer"}
+# Large fixtures may exceed MAX_BOX_FRACTION when the instruction names them (T5-T7: the cabinet).
+FIXTURE_PROMPTS = ("cabinet", "drawer")
+MAX_FIXTURE_FRACTION = 0.4
 # Decoy phrases: things always in view that would otherwise be matched to a noun; their boxes are dropped.
 DECOY_PROMPTS = ("robot arm", "cabinet", "stove")   # ignored when the instruction names them
 
 _CLAUSE = r"(?P<clause>(?:between|next to|on|in|from) .+?)"
-_PICK = r"(?:pick up|grab|take|move)"
-_PLACE = r"(?:place|put|set)"
+_PICK = r"(?:pick up|grab|take|move|lift|get|bring)"
+_PLACE = r"(?:place|put|set|drop|stick|leave)"
 _PATTERNS = [
     # LIBERO-Spatial style: "pick up the <target> <relation clause> and place it on the <destination>"
     re.compile(rf"^{_PICK} the (?P<target>.+?) {_CLAUSE} and {_PLACE} it (?:down )?(?:on|in) the (?P<dest>.+)$"),
@@ -53,10 +56,14 @@ _PATTERNS = [
     re.compile(rf"^move the (?P<target>.+?) {_CLAUSE} on the (?P<dest>.+)$"),
     # LIBERO-Goal style: "put the <target> on the <destination>"
     re.compile(rf"^(?:{_PLACE}|move) the (?P<target>.+?) (?:down )?(?:on|in) the (?P<dest>.+)$"),
+    # "open the <destination> and put the <target> inside (it)"
+    re.compile(rf"^open the (?P<dest>.+?) and {_PLACE} the (?P<target>.+?) in(?: it)?$"),
 ]
 # paraphrase normalization (Section 6.4 wordings) before matching; order matters
 _NORMALIZE = [
     (r"\b(?:sitting|located|that is|which is) ", ""),
+    (r"\bpull open\b", "open"),
+    (r"\bout of\b", "in"),                          # "take the bowl out of the drawer" names where it is
     (r"\b(?:beside|near)\b", "next to"),
     (r"\bthe box of cookies\b", "the cookie box"),
     (r"\b(?:onto|on top of)\b", "on"),
@@ -77,15 +84,21 @@ class ParsedInstruction:
 
 
 def parse_instruction(text: str) -> ParsedInstruction:
-    s = " ".join(text.lower().strip().rstrip(".").split())
+    s = " ".join(re.sub(r"[^a-z ]", " ", text.lower()).split())
     for pat, rep in _NORMALIZE:
         s = re.sub(pat, rep, s)
+    s = _add_articles(s)
     for pat in _PATTERNS:
         m = pat.match(s)
         if not m:
             continue
-        p = ParsedInstruction(target=m["target"], destination=m["dest"])
+        # "the top drawer of the cabinet" -> "top drawer": the destination is the specific part
+        p = ParsedInstruction(target=m["target"], destination=m["dest"].split(" of ")[0])
         clause = m.groupdict().get("clause")
+        if not clause:   # "put the black bowl between the plate and the ramekin on the plate"
+            split = re.match(r"^(?P<t>.+?) (?P<c>(?:between|next to|from) .+)$", p.target)
+            if split:
+                p.target, clause = split["t"], split["c"]
         if clause:
             p.relation, p.anchors = _parse_clause(clause)
         return p
@@ -105,6 +118,23 @@ def _parse_clause(clause: str) -> tuple[str, list[str]]:
             noun = noun.split(" of ")[-1] if " of " in noun else noun
             return rel, [_strip_article(noun)]
     raise ValueError(f"unknown relation clause: {clause!r}")
+
+
+def _add_articles(s: str) -> str:
+    """Typed prompts often drop "the" ("put bowl on stove"); the patterns expect it after verbs and
+    prepositions."""
+    words = s.split()
+    out = []
+    for i, w in enumerate(words):
+        out.append(w)
+        nxt = words[i + 1] if i + 1 < len(words) else None
+        if nxt and nxt not in ("the", "a", "an", "it", "up", "down", "open", "and", "of", "to") \
+                and (w in ("on", "in", "to", "of", "between", "and", "up", "open", "put", "place", "set", "drop",
+                           "stick", "leave", "grab", "take", "move", "lift", "get", "bring")) \
+                and not (w == "and" and nxt in ("place", "put", "set", "drop", "stick", "leave")) \
+                and not (w in ("of",) and nxt == "cookies"):
+            out.append("the")
+    return " ".join(out)
 
 
 def _strip_article(s: str) -> str:
@@ -250,7 +280,9 @@ class InstructionPerception:
         noun_cols = [prompts.index(DETECTOR_PROMPTS.get(n, n)) for n in nouns]
         S = phrase[:, noun_cols]                                                     # (queries, nouns)
         decoy = np.array([prompts[i] not in noun_of for i in phrase.argmax(axis=1)])
-        keep = (S.max(axis=1) > MIN_SCORE) & (bw * bh < MAX_BOX_FRACTION) & ~decoy
+        fixture = np.array([prompts[i] in FIXTURE_PROMPTS for i in phrase.argmax(axis=1)])
+        size_ok = (bw * bh < MAX_BOX_FRACTION) | (fixture & (bw * bh < MAX_FIXTURE_FRACTION))
+        keep = (S.max(axis=1) > MIN_SCORE) & size_ok & ~decoy
         boxes, S = boxes[keep], S[keep]
         k = nms(boxes, S.max(axis=1)) if len(boxes) else []
         return boxes[k], S[k]

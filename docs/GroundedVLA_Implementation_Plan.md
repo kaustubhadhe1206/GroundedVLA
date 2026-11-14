@@ -903,3 +903,22 @@ Times are on the laptop's RTX 3050.
 - Getting there took three fixes, each found from the overlays: Grounding DINO base instead of tiny (tiny confused bowls and plates), choosing boxes from the full noun score matrix instead of the detector's merged labels, and detector prompts for unusual names ("ramekin" → "small metal cup", "cookie box" → "snack box") plus decoy phrases (robot arm, cabinet, stove).
 - **Caveat:** the prompt choices were probed on 3 of these 5 demos, so this table is slightly optimistic. The unbiased test is V3 with predicted masks on LIBERO's test states.
 - At about 2–3 s per frame on the laptop, rollouts should run perception at episode start and then periodically, not every step.
+
+---
+
+## 13. Scope Extension (Nov 13): Drawers and a Bottle
+
+Three LIBERO tasks with recorded demos, chosen to widen the skills while keeping every task "move object X to place Y". That keeps grounding, masks and metrics uniform.
+
+| Key | Suite | Instruction | Goal |
+|---|---|---|---|
+| T5 | libero_spatial | pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate | On bowl plate (the bowl starts inside a drawer) |
+| T6 | libero_goal | open the top drawer and put the bowl inside | In bowl cabinet_top_region (open the drawer, then place) |
+| T7 | libero_goal | put the wine bottle on top of the cabinet | On wine_bottle cabinet_top_side (a new object) |
+
+- **Not added:** "open the middle drawer" (nothing is picked up, so target grounding and grasp metrics don't apply), and "orange juice in the basket" (a new scene and a suite download).
+- **Destinations:** T6 and T7 ground the whole cabinet as their destination, as T3 does for the stove. The cabinet is static, so the offset to the drawer or top is constant.
+- **Shared scene:** T3, T4, T6 and T7 share one kitchen with identical objects; only the instruction says which skill to do.
+- **Evaluation (budget):** T5–T7 run in-distribution and camera yaw ±20° only, 25 rollouts each (`light_eval` in `configs/eval_ood.yaml`, enforced in `run_eval.py`). T1–T4 keep the full plan.
+- **Paraphrases:** 3 per new task, written before any evaluation. The perception parser handles the new sentence shapes ("open the X and put the Y inside", "take … out of …").
+- **Demo prompts (`demo/skills.py`):** a free-form prompt is matched to a trained skill of the current scene. Target and destination must both agree, and a spatial relation must name the same objects. The policy then gets the skill's trained instruction and success is that skill's goal. Unmatched prompts are reported as unmatched and are never silently mapped. This makes "any relevant prompt" work for trained skills; new skills still need demos.

@@ -1,6 +1,6 @@
 # V3: RGB + mask + 3D grounding tokens. Identical to v2 except `model`.
 name: v3_grounded
-tasks: [T1, T2, T3, T4]
+tasks: [T1, T2, T3, T4, T5, T6, T7]
 
 data:
   repo_id: local/gvla_libero

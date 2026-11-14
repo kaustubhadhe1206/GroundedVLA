@@ -80,6 +80,13 @@ def write_demo(f_out: h5py.File, name: str, ep: dict) -> None:
     f_out.flush()
 
 
+def save_dropped(path, key: str, names: set) -> None:
+    """Update one task's entry, re-reading the file first: tasks may be replayed in parallel."""
+    dropped = json.loads(path.read_text()) if path.exists() else {}
+    dropped[key] = sorted(names)
+    path.write_text(json.dumps(dropped, indent=2))
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--tasks", nargs="+", default=["T1", "T2", "T3"])
@@ -114,15 +121,13 @@ def main():
                 ep = replay_one(w, f_in["data"][name], target_id, dest_id, debug=i < DEBUG_DEMOS)
                 if ep is None:
                     task_dropped.add(name)
-                    dropped[key] = sorted(task_dropped)
-                    dropped_file.write_text(json.dumps(dropped, indent=2))
+                    save_dropped(dropped_file, key, task_dropped)
                     print(f"{key} {name}: replay failed, dropped")
                     continue
                 write_demo(f_out, name, ep)
                 print(f"{key} {name}: {len(ep['action'])} steps")
             kept = len(demos) - len(task_dropped)
-        dropped[key] = sorted(task_dropped)
-        dropped_file.write_text(json.dumps(dropped, indent=2))
+        save_dropped(dropped_file, key, task_dropped)
         print(f"{key}: kept {kept}/{len(demos)} ({kept / len(demos):.0%})")
         w.close()
 

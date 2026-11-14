@@ -78,8 +78,11 @@ def main():
     paths = load_paths()
     manifest = json.loads((REPO_ROOT / cfg["data"]["manifest"]).read_text())
     conditions = {"in_distribution": {}} if args.split == "test" else {"val": {}}
+    light = {}
     if args.eval_config and args.split == "test":
-        conditions.update(yaml.safe_load(Path(args.eval_config).read_text())["conditions"])
+        eval_cfg = yaml.safe_load(Path(args.eval_config).read_text())
+        conditions.update(eval_cfg["conditions"])
+        light = eval_cfg.get("light_eval", {})
     ident = run_identity(cfg, args.policy, args.checkpoint, args.name)
     out_dir = Path(paths["outputs"]) / "eval" / ident["run"] / args.policy
     if args.tag:
@@ -102,9 +105,12 @@ def main():
     for task_key in args.tasks or cfg["tasks"]:
         spec = TASKS[task_key]
         policy = build_policy(args.policy, spec, paths, checkpoint=args.checkpoint)
+        is_light = task_key in light.get("tasks", [])
         for cond_name, cond in conditions.items():
             if "tasks" in cond and task_key not in cond["tasks"]:
                 continue
+            if is_light and cond_name != "in_distribution" and cond_name not in light["conditions"]:
+                continue                                 # scope-extension task: lighter evaluation
             if "init_states" in cond and cond["init_states"] not in manifest.get("ood", {}):
                 # never run these with the default states: they would be logged as OOD but be in-distribution
                 print(f"skip {task_key} {cond_name}: OOD initial states not generated yet (ood/make_ood_states.py)")
@@ -125,6 +131,8 @@ def main():
             init_states = env.init_states() if args.split == "test" else val_init_states(manifest, task_key, paths)
             default_n = cfg["eval"]["rollouts_per_task"] if args.split == "test" else manifest["val_rollouts_per_task"]
             n = args.episodes or cond.get("rollouts", default_n)
+            if is_light and not args.episodes:
+                n = min(n, light["rollouts"])
             for i in range(n):
                 if i in finished:
                     continue

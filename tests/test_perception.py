@@ -17,6 +17,8 @@ from groundedvla.grounding.perception import ParsedInstruction, matches, nms, pa
     ("put the bowl on the stove", "bowl", None, [], "stove"),
     ("put the bowl on the plate", "bowl", None, [], "plate"),
     ("put the bowl on top of the cabinet", "bowl", None, [], "cabinet"),
+    ("open the top drawer and put the bowl inside", "bowl", None, [], "top drawer"),
+    ("put the wine bottle on top of the cabinet", "wine bottle", None, [], "cabinet"),
     ("Grab... no", None, None, None, None),
 ])
 def test_parse_instruction(text, target, relation, anchors, dest):
@@ -36,7 +38,10 @@ def test_every_paraphrase_parses_like_its_original():
 
     originals = {"T1": "pick up the black bowl between the plate and the ramekin and place it on the plate",
                  "T2": "pick up the black bowl next to the cookie box and place it on the plate",
-                 "T3": "put the bowl on the stove", "T4": "put the bowl on the plate"}
+                 "T3": "put the bowl on the stove", "T4": "put the bowl on the plate",
+                 "T5": "pick up the black bowl in the top drawer of the wooden cabinet and place it on the plate",
+                 "T6": "open the top drawer and put the bowl inside",
+                 "T7": "put the wine bottle on top of the cabinet"}
     para = json.loads((REPO_ROOT / "groundedvla/ood/paraphrases.json").read_text())
     for key in TASKS:
         want = parse_instruction(originals[key])

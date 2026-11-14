@@ -40,14 +40,14 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import groundedvla.envs.compat  # noqa: F401  (must precede LIBERO / robosuite imports)
+from groundedvla.demo.skills import goal_state, match_prompt, phrasings, skills_in_scene, task_instruction
 from groundedvla.envs.libero_wrapper import CameraPerturbation, LiberoWrapper
 from groundedvla.policies.chunking import MODES, ChunkExecutor
 from groundedvla.policies.registry import build_policy, default_horizon, load_registry
 from groundedvla.tasks import CONTROL_HZ, NUM_SETTLE_STEPS, TASKS, resolve_task
-from groundedvla.utils.paths import REPO_ROOT, load_paths
+from groundedvla.utils.paths import load_paths
 
 INDEX_HTML = Path(__file__).with_name("index.html")
-PARAPHRASES = REPO_ROOT / "groundedvla" / "ood" / "paraphrases.json"
 DISPLAY_CAMERAS = ("agentview", "frontview", "sideview", "birdview", "galleryview")
 MAX_SHIFT_M = 0.15
 
@@ -151,7 +151,9 @@ class Demo:
                       "latency_ms": None, "camera": args.camera, "cameras": [], "tasks": list(TASKS),
                       "suggestions": [], "history": [], "playback": args.playback, "has_recording": False,
                       "conditions": vars(self.cond).copy(), "conditions_text": self.cond.describe(),
-                      "running_agent": None, "results": []}
+                      "running_agent": None, "results": [], "interpret": True, "match": None, "skills": []}
+        self.skills: dict[str, str] = {}          # trained skills in the current scene: task -> instruction
+        self.active_goal: list | None = None      # BDDL goal checked for "goal satisfied" during a run
         self.env: LiberoWrapper | None = None
         self.obs = None
         self.agents: list[Agent] = []
@@ -216,12 +218,14 @@ class Demo:
         names = {self.env.sim.model.camera_id2name(i) for i in range(self.env.sim.model.ncam)}
         cams = [c for c in DISPLAY_CAMERAS if c in names]
         g = self.env.goal
+        self.skills = {k: task_instruction(k) for k in skills_in_scene(spec.key)} or {spec.key: self.env.instruction}
+        self.active_goal = None
         self.update(status="idle", message="type an instruction and press Run", task=spec.key, init=init,
                     instruction=self.env.instruction, goal=f"{g.target} {g.predicate.lower()} {g.destination_object}",
                     step=0, max_steps=self.args.max_steps or spec.max_steps, goal_satisfied=self.env.eval_goal(),
                     cameras=cams, camera=self.state["camera"] if self.state["camera"] in cams else cams[0],
-                    suggestions=self.suggestions(spec.key, self.env.instruction),
-                    conditions=vars(self.cond).copy(), conditions_text=self.cond.describe())
+                    suggestions=self.suggestions(), skills=[{"task": k, "instruction": v} for k, v in self.skills.items()],
+                    conditions=vars(self.cond).copy(), conditions_text=self.cond.describe(), match=None)
         if not quiet:
             self.log(f"scene {spec.key}, initial state {init}, {self.cond.describe()}")
         self.render()
@@ -243,15 +247,22 @@ class Demo:
     def needs_depth_seg(self) -> bool:
         return any(getattr(a.policy, "needs_depth_seg", False) for a in self.agents)
 
-    @staticmethod
-    def suggestions(task_key: str, instruction: str) -> list[dict]:
-        out = [{"text": instruction, "kind": "trained"}]
-        try:
-            para = json.loads(PARAPHRASES.read_text()).get(task_key, [])
-        except (OSError, ValueError):
-            para = []
-        out += [{"text": p, "kind": "paraphrase"} for p in para if p and p != "TODO"]
+    def suggestions(self) -> list[dict]:
+        """Every trained skill in this scene, with one paraphrase each."""
+        out = []
+        for key, instruction in self.skills.items():
+            out.append({"text": instruction, "kind": f"{key} trained"})
+            para = phrasings(key, instruction)[1:2]
+            out += [{"text": p, "kind": f"{key} reworded"} for p in para]
         return out
+
+    def goal_satisfied(self) -> bool:
+        if self.active_goal is None:
+            return False
+        try:
+            return all(self.env.robosuite_env._eval_predicate(g) for g in self.active_goal)
+        except Exception:      # a goal naming something this scene doesn't have
+            return False
 
     # ------------------------------------------------------------------ runs
     def run_agent(self, agent: Agent, prompt: str, live: bool) -> Recording:
@@ -270,7 +281,7 @@ class Demo:
             return chunk
 
         main, inputs = self.render()
-        rec.frames.append((main, inputs, self.env.eval_goal(), 0))
+        rec.frames.append((main, inputs, self.goal_satisfied(), 0))
         rec.outcome, step = "time limit reached", 0
         while step < max_steps:
             if self.stop_requested():
@@ -278,10 +289,10 @@ class Demo:
                 break
             step += 1
             t0 = time.perf_counter()
-            self.obs["task"] = prompt                     # the typed prompt replaces the task instruction
+            self.obs["task"] = prompt                     # replaces the scene's own instruction
             action, _ = agent.executor.act(self.obs, predict)
-            self.obs, _, _, info = self.env.step(self.env.action_from_policy(action))
-            satisfied = bool(info["success"])
+            self.obs, _, _, _ = self.env.step(self.env.action_from_policy(action))
+            satisfied = self.goal_satisfied()
             msg = "acting live" if live else f"{agent.label}: computing step {step} / {max_steps}, playback follows"
             self.update(step=step, goal_satisfied=satisfied, message=msg)
             main, inputs = self.render()
@@ -292,6 +303,8 @@ class Demo:
             if live and self.args.realtime:
                 time.sleep(max(0.0, 1.0 / CONTROL_HZ - (time.perf_counter() - t0)))
         rec.steps = step
+        if self.active_goal is None and rec.outcome == "time limit reached":
+            rec.outcome = "ran to the time limit (no trained goal to check)"
         lat = f", median policy call {np.median(latencies):.0f} ms" if latencies else ""
         self.log(f"{agent.label}: {rec.outcome} after {step} steps{lat}")
         return rec
@@ -302,15 +315,17 @@ class Demo:
             return
         self.update(status="running", prompt=prompt, step=0, message="thinking...", results=[])
         self.log(f'prompt: "{prompt}"' + ("" if self.cond.is_default else f" [{self.cond.describe()}]"))
+        policy_prompt, goal_key, match = self.interpret(prompt)
         compare = len(self.agents) > 1
         live = not self.state["playback"] and not compare
         recs = []
         for agent in self.agents:
             if compare:                                 # identical starting scene for every model
                 self.load_scene(self.state["task"], self.state["init"], quiet=True)
-                self.update(status="running")
+                self.update(status="running", match=match)
+            self.active_goal = goal_state(goal_key) if goal_key else None
             self.update(running_agent=agent.label)
-            recs.append(self.run_agent(agent, prompt, live))
+            recs.append(self.run_agent(agent, policy_prompt, live))
             if recs[-1].outcome == "stopped":
                 break
         self.update(running_agent=None,
@@ -323,6 +338,26 @@ class Demo:
             self.play(frames, " vs ".join(f"{r.label}: {r.outcome}" for r in recs))
         summary = "; ".join(f"{r.label}: {r.outcome} after {r.steps} steps" for r in recs)
         self.update(status="idle", message=f"{summary}. Type another prompt, Replay, or Reset.")
+
+    def interpret(self, prompt: str) -> tuple[str, str | None, dict | None]:
+        """(text for the policy, task whose goal is checked, match info for the page).
+
+        With "map to a trained skill" on, the prompt is matched to a skill of this scene: the policy
+        gets that skill's trained instruction and success is that skill's goal. Unmatched prompts go
+        to the policy as typed, without a goal check. With it off, the prompt goes as typed and the
+        scene's own goal is checked (the original demo behaviour).
+        """
+        if not self.state["interpret"]:
+            self.update(match=None)
+            return prompt, self.env.task.key, None
+        m = match_prompt(prompt, self.skills)
+        info = {"task": m.task, "instruction": m.instruction, "reason": m.reason}
+        self.update(match=info)
+        if m.task:
+            self.log(f"understood as {m.task}: \"{m.instruction}\"")
+            return m.instruction, m.task, info
+        self.log(f"no trained skill matches ({m.reason}); sending the prompt as typed")
+        return prompt, None, info
 
     def side_by_side(self, recs: list[Recording]) -> list[tuple[bytes, bytes | None]]:
         """Pair the agents' frames step by step (the shorter run holds its last frame), with labels."""
@@ -391,6 +426,8 @@ class Demo:
             self.replay()
         elif kind == "playback":
             self.update(playback=bool(cmd.get("on", True)))
+        elif kind == "interpret":
+            self.update(interpret=bool(cmd.get("on", True)))
 
     def main_loop(self) -> None:
         a = self.args
@@ -470,7 +507,7 @@ def make_handler(demo: Demo):
             try:
                 n = min(int(self.headers.get("Content-Length", 0)), 10_000)
                 cmd = json.loads(self.rfile.read(n) or b"{}")
-                if cmd.get("cmd") not in ("reset", "run", "stop", "camera", "replay", "playback"):
+                if cmd.get("cmd") not in ("reset", "run", "stop", "camera", "replay", "playback", "interpret"):
                     raise ValueError("unknown command")
             except (ValueError, json.JSONDecodeError) as e:
                 return self._send(400, json.dumps({"error": str(e)}).encode(), "application/json")
