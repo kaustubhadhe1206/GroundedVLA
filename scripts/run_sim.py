@@ -40,7 +40,7 @@ def has_display() -> bool:
 def parse_args():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", choices=list(load_registry()), help="model name from configs/models.yaml")
-    ap.add_argument("--task", default="T1", help="T1..T4 or <suite>:<task_id> (default T1)")
+    ap.add_argument("--task", default="T1", help="T1..T7 or <suite>:<task_id> (default T1)")
     ap.add_argument("--episodes", type=int, default=3, help="number of episodes (default 3)")
     ap.add_argument("--start", type=int, default=0, help="first initial-state / demo index (default 0)")
     ap.add_argument("--checkpoint", default=None, help="model dir (required for smolvla_ckpt)")
