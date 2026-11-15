@@ -48,6 +48,8 @@ OpenVLA-7B needs about 16 GB of GPU memory and its own environment, so run it on
 .\demo smolvla_ckpt --checkpoint <v1 step dir> --label V1 --compare smolvla_ckpt --compare-checkpoint <v3 step dir> --compare-label V3
 ```
 
+Then open http://127.0.0.1:8765. On Colab (a T4 is enough), `notebooks/05_demo.ipynb` runs the same demo with a Gradio page (`groundedvla/demo/gradio_app.py`), with weights from Drive, and prints a public link.
+
 Then open http://127.0.0.1:8765. The left side has:
 - the scene picker (T1–T7, initial state)
 - **test conditions**: camera yaw, height and field of view, and a target shift in cm, all applied on reset
@@ -127,6 +129,7 @@ Everything lives on `D:\groundedvla` (plan Section 2.5). The code in this repo i
 | `02_build_dataset.ipynb` | A5: masks, 3D grounding and LeRobot dataset; A6 and A7 checks | T4 is enough |
 | `03_train.ipynb` | B1/B3: throughput test, training with auto-resume, checkpoint selection, horizon tuning, first test; `CONFIG` picks the variant, `SEED` the training seed | A100 |
 | `04_eval.ipynb` | B4: every condition in `configs/eval_ood.yaml` for one run, then the report and paired comparisons across runs | A100 |
+| `05_demo.ipynb` | the interactive demo with a Gradio page and a public link; weights from Drive | T4 is enough |
 
 Training runs (each with the same data, budget and evaluation):
 

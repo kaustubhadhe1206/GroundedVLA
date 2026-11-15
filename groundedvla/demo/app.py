@@ -158,6 +158,7 @@ class Demo:
         self.obs = None
         self.agents: list[Agent] = []
         self.recording: list[tuple[bytes, bytes | None]] = []   # what Replay plays
+        self.alive = True                         # main_loop runs until this is cleared (notebook UI)
 
     # ------------------------------------------------------------------ state for the page
     def update(self, **kw) -> None:
@@ -445,7 +446,7 @@ class Demo:
         self.update(agents=[{"label": ag.label, "horizon": ag.horizon} for ag in self.agents],
                     compare=len(self.agents) > 1)
         self.load_scene(task.key, a.init)
-        while True:
+        while self.alive:
             try:
                 cmd = self.commands.get(timeout=0.1)
             except queue.Empty:
@@ -517,7 +518,7 @@ def make_handler(demo: Demo):
     return Handler
 
 
-def parse_args():
+def parse_args(argv: list[str] | None = None):
     smolvla = [k for k, v in load_registry().items() if v["type"] == "smolvla"]
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("model", nargs="?", default="smolvla_libero", choices=smolvla)
@@ -528,7 +529,7 @@ def parse_args():
     ap.add_argument("--compare-checkpoint", default=None)
     ap.add_argument("--compare-horizon", type=int, default=None)
     ap.add_argument("--compare-label", default=None)
-    ap.add_argument("--task", default="T1", help="initial scene: T1..T4 or <suite>:<task_id>")
+    ap.add_argument("--task", default="T1", help="initial scene: T1..T7 or <suite>:<task_id>")
     ap.add_argument("--init", type=int, default=0, help="initial-state index")
     ap.add_argument("--mode", choices=MODES, default="naive")
     ap.add_argument("--te-m", type=float, default=0.01)
@@ -540,7 +541,7 @@ def parse_args():
                     help="start in live mode (show each step as computed) instead of smooth playback")
     ap.add_argument("--device", default=None)
     ap.add_argument("--port", type=int, default=8765)
-    return ap.parse_args()
+    return ap.parse_args(argv)
 
 
 class Server(ThreadingHTTPServer):
