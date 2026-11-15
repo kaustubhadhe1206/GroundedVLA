@@ -652,7 +652,7 @@ Step B1 starts once A1 to A5 pass their "done when" checks. Steps B2 and B3 star
 ### Step B1: Fine-Tune the RGB Baseline (V1)
 
 Starting hyperparameters:
-- Starting checkpoint: `lerobot/smolvla_base`
+- Starting checkpoint: `HuggingFaceVLA/smolvla_libero` (`model.init_from` in every config; changed from `lerobot/smolvla_base` on Nov 15, see Section 14)
 - Trainable parameters: action expert and state projection (LeRobot defaults). Backbone frozen.
 - Optimizer: AdamW, learning rate 1e-4, weight decay 1e-10, cosine decay with 1,000 warmup steps
 - Batch size: 32 (raise to 64 if memory allows on the A100)
@@ -666,7 +666,7 @@ Track:
 - Training and validation loss, learning rate, GPU memory, and training time.
 
 Implementation (`groundedvla/train/train.py`, Nov 8):
-- The policy is built from `smolvla_base` with our input features: 2 RGB cameras (plus the mask for V2/V3), 8-D state, 7-D action. `smolvla_base` pads state and action to 32-D, so all its weights load unchanged.
+- The policy is built from the starting checkpoint with our input features: 2 RGB cameras (plus the mask for V2/V3), 8-D state, 7-D action. `smolvla_base` pads state and action to 32-D, so all its weights load unchanged.
 - 99.9M of 450M parameters are trainable: the action expert and the projections.
 - Weights stay in bf16, as in LeRobot's SmolVLA recipe; `HuggingFaceVLA/smolvla_libero` also stores its trained expert in bf16. Forward passes use bf16 autocast.
 - AdamW (betas 0.9/0.95), grad clip 10, cosine from 1e-4 to 2.5e-6 over the full 20k steps after 1k warmup.
@@ -922,3 +922,13 @@ Three LIBERO tasks with recorded demos, chosen to widen the skills while keeping
 - **Evaluation (budget):** T5–T7 run in-distribution and camera yaw ±20° only, 25 rollouts each (`light_eval` in `configs/eval_ood.yaml`, enforced in `run_eval.py`). T1–T4 keep the full plan.
 - **Paraphrases:** 3 per new task, written before any evaluation. The perception parser handles the new sentence shapes ("open the X and put the Y inside", "take … out of …").
 - **Demo prompts (`demo/skills.py`):** a free-form prompt is matched to a trained skill of the current scene. Target and destination must both agree, and a spatial relation must name the same objects. The policy then gets the skill's trained instruction and success is that skill's goal. Unmatched prompts are reported as unmatched and are never silently mapped. This makes "any relevant prompt" work for trained skills; new skills still need demos.
+
+## 14. Starting Checkpoint: smolvla_libero (Nov 15)
+
+All variants (V1, V1-aug, V2, V3) now start from `HuggingFaceVLA/smolvla_libero` instead of `lerobot/smolvla_base` (`model.init_from: smolvla_libero` in every training config). This was the planned fallback in Section 9 (B1 risks); we adopt it up front:
+
+- **Why:** the pipeline check (Step A3) shows smolvla_libero is already strong in distribution (T2–T5, T7: 90–100%) but weak where grounding should matter: T1, two identical bowls told apart by position (40%), and T6, open the drawer then place the bowl (30%), and it drops under a camera rotation (T3 at +20°: 80%). Starting from it gives every variant a strong policy, so the comparison measures what masks and 3D grounding add on top of it, and the demo stays reliable.
+- **Fairness is unchanged:** every variant starts from the same weights and gets the same data, steps and evaluation.
+- **Normalization:** state/action mean and std are taken from smolvla_libero's own preprocessor, not from our dataset (ours differ: e.g. end-effector z std 0.10 vs 0.38), so at step 0 the model behaves exactly like smolvla_libero. Images are not normalized (identity), so the V2/V3 mask camera is unaffected.
+- **Caveat for the report:** smolvla_libero was trained on all LIBERO demonstrations, including those of our tasks, so in-distribution numbers mostly reflect that pretraining; the claims rest on the out-of-distribution conditions and on the paired V1-vs-V3 comparisons.
+- `init_from: smolvla_base` still works, for an ablation if time allows.

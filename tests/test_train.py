@@ -59,3 +59,23 @@ def test_augmentation_refuses_mask_variants():
            "train": {"augment": {"color_jitter": {"brightness": 0.2}}}}
     with pytest.raises(ValueError):
         make_augmentation(cfg)
+
+
+def test_normalization_stats_from_smolvla_libero(tmp_path):
+    import numpy as np
+    import torch
+    from safetensors.torch import save_file
+
+    from groundedvla.train.train import normalization_stats
+
+    ours = {"observation.state": {"mean": np.zeros(8), "std": np.ones(8), "min": -np.ones(8)},
+            "action": {"mean": np.zeros(7), "std": np.ones(7)},
+            "observation.images.image": {"mean": np.zeros((3, 1, 1))}}
+    save_file({"observation.state.mean": torch.full((8,), 2.0), "observation.state.std": torch.full((8,), 3.0),
+               "action.mean": torch.full((7,), 4.0), "action.std": torch.full((7,), 5.0)},
+              str(tmp_path / "policy_preprocessor_step_5_normalizer_processor.safetensors"))
+    assert normalization_stats(ours, "smolvla_base", tmp_path) is ours          # base: our stats
+    s = normalization_stats(ours, "smolvla_libero", tmp_path)
+    assert (s["observation.state"]["mean"] == 2).all() and (s["action"]["std"] == 5).all()
+    assert (s["observation.state"]["min"] == -1).all()                          # other stats kept
+    assert (ours["observation.state"]["mean"] == 0).all()                       # input not modified

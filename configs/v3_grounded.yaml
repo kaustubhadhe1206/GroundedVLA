@@ -7,6 +7,7 @@ data:
   manifest: groundedvla/data/split_manifest.json
 
 model:
+  init_from: smolvla_libero    # starting weights (same for every variant): smolvla_libero or smolvla_base
   variant: v3
   image_keys: [observation.images.image, observation.images.image2, observation.images.mask]
   use_grounding: true

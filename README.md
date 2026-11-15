@@ -131,7 +131,7 @@ Everything lives on `D:\groundedvla` (plan Section 2.5). The code in this repo i
 | `04_eval.ipynb` | B4: every condition in `configs/eval_ood.yaml` for one run, then the report and paired comparisons across runs | A100 |
 | `05_demo.ipynb` | the interactive demo with a Gradio page and a public link; weights from Drive | T4 is enough |
 
-Training runs (each with the same data, budget and evaluation):
+Training runs (each with the same data, budget and evaluation, and all starting from `smolvla_libero`; `model.init_from` in the configs, plan Section 14):
 
 | Run | Config | Purpose |
 |---|---|---|

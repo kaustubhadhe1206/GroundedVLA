@@ -1,8 +1,10 @@
 """Fine-tune SmolVLA for V1 / V2 / V3 with one shared loop (Steps B1, B3).
 
-Starts from lerobot/smolvla_base with our input features (2 RGB cameras, + mask for V2/V3), the 8-D
-state and the 7-D action; smolvla_base pads state and action to 32-D internally, so its weights load
-unchanged. Backbone frozen (freeze_vision_encoder + train_expert_only, LeRobot defaults). The optimizer,
+Starts from `model.init_from` (smolvla_libero: HuggingFaceVLA/smolvla_libero, already trained on all of
+LIBERO; or smolvla_base) with our input features (2 RGB cameras, + mask for V2/V3), the 8-D state and the
+7-D action; SmolVLA pads state and action to 32-D internally, so the weights load unchanged. From
+smolvla_libero, state/action are normalized with its own statistics, so training starts exactly from its
+behaviour (ours differ, e.g. state z std 0.10 vs its 0.38). Backbone frozen (freeze_vision_encoder + train_expert_only, LeRobot defaults). The optimizer,
 grad clipping and cosine schedule match LeRobot's SmolVLA presets, with our lr / warmup / steps.
 
 Checkpoints (plan Section 2.7), written to <checkpoints>/<run>/step_XXXXXX/:
@@ -28,7 +30,7 @@ import numpy as np
 import torch
 import yaml
 
-from groundedvla.policies.registry import resolve_weights
+from groundedvla.policies.registry import load_registry, resolve_weights
 from groundedvla.tasks import CONTROL_HZ
 from groundedvla.utils.paths import REPO_ROOT, load_paths
 
@@ -78,6 +80,43 @@ def infinite_loader(ds, batch_size: int, num_workers: int, seed: int, start_epoc
 
 
 # ----------------------------------------------------------------------------- policy
+INIT_CHOICES = ("smolvla_base", "smolvla_libero")
+
+
+def init_weights(cfg: dict, paths: dict) -> tuple[str, Path]:
+    """(name, folder) of the starting weights; on Colab the Drive copy is staged to local disk first."""
+    name = cfg["model"].get("init_from", "smolvla_base")
+    if name not in INIT_CHOICES:
+        raise ValueError(f"model.init_from must be one of {INIT_CHOICES}, got {name!r}")
+    spec = load_registry()[name]
+    path = resolve_weights(spec["hub_id"], spec["folder"], paths)
+    if "local_models" in paths and path.parent == Path(paths["models"]):
+        from groundedvla.utils.colab import stage_to_local
+
+        path = stage_to_local(f"models/{spec['folder']}")
+    return name, path
+
+
+def normalization_stats(ds_stats: dict, init_name: str, base: Path) -> dict:
+    """Our dataset's statistics, except that state/action mean/std come from smolvla_libero when starting
+    from it (smolvla_base's stats are for another robot, so ours are used there)."""
+    if init_name == "smolvla_base":
+        return ds_stats
+    from safetensors.torch import load_file
+
+    files = sorted(base.glob("policy_preprocessor_step_*_normalizer_processor.safetensors"))
+    if not files:
+        raise FileNotFoundError(f"no normalizer statistics in {base}")
+    saved = load_file(str(files[0]))
+    stats = {k: dict(v) for k, v in ds_stats.items()}
+    for key in ("observation.state", "action"):
+        for stat in ("mean", "std"):
+            ours = np.asarray(stats[key][stat])
+            theirs = saved[f"{key}.{stat}"].numpy().astype(ours.dtype).reshape(ours.shape)
+            stats[key][stat] = theirs
+    return stats
+
+
 def make_policy_config(cfg: dict, base: Path, ds_meta, device: str):
     from lerobot.configs.policies import PreTrainedConfig
     from lerobot.datasets.utils import dataset_to_policy_features
@@ -272,13 +311,14 @@ def main():
     print(f"[train] dataset {ds_root}: train {train_ds.num_episodes} episodes / {train_ds.num_frames} frames, "
           f"val {val_ds.num_episodes} / {val_ds.num_frames}")
 
-    base = resolve_weights("lerobot/smolvla_base", "smolvla_base", paths)
+    init_name, base = init_weights(cfg, paths)
+    print(f"[train] starting weights: {init_name} ({base})")
     resume_from = None if args.no_resume else latest_resumable(run_dir)
     pc = make_policy_config(cfg, base, train_ds.meta, device)
     cls = policy_class(cfg["model"]["variant"])
     policy = cls.from_pretrained(str(resume_from or base), config=pc).to(device)
     policy.train()
-    pre, post = make_pre_post_processors(pc, dataset_stats=train_ds.meta.stats)
+    pre, post = make_pre_post_processors(pc, dataset_stats=normalization_stats(train_ds.meta.stats, init_name, base))
 
     params = [p for p in policy.parameters() if p.requires_grad]
     n_train, n_all = sum(p.numel() for p in params), sum(p.numel() for p in policy.parameters())
