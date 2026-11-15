@@ -933,21 +933,24 @@ All variants (V1, V1-aug, V2, V3) now start from `HuggingFaceVLA/smolvla_libero`
 - **Caveat for the report:** smolvla_libero was trained on all LIBERO demonstrations, including those of our tasks, so in-distribution numbers mostly reflect that pretraining; the claims rest on the out-of-distribution conditions and on the paired V1-vs-V3 comparisons.
 - `init_from: smolvla_base` still works, for an ablation if time allows.
 
-## 15. Stretch Demo After V1–V3: "Salad Order" Mode (planned Nov 15)
+**Precision (Nov 15).** `train.precision: bf16` means bf16 autocast on GPUs with native bf16 (A100, L4), and fp16 autocast with loss scaling and fp32 master weights on older GPUs (T4), where bf16 is only emulated. Checked: from smolvla_libero both give the same starting losses (train ≈ 0.09–0.10, val 0.16–0.17). The GPU and precision of every run are recorded in its log; if variants end up trained on different GPUs, the report says so.
 
-Only after V1/V2/V3 are trained and evaluated (target: Week 4, about 2–3 days of work). It is a demo feature, not part of the evaluation. RL was considered and rejected: learning language-conditioned pick-and-place from scratch needs millions of steps and reward tuning, which neither the deadline nor the A100 quota allows.
+## 15. After V1–V3: Salad Bowl Application (planned Nov 15)
 
-**Idea:** the user types a free-form order ("I'd like ketchup, tomato sauce and some cream cheese"); the robot puts each ordered item into the basket, one at a time.
+Starts only once V1, V2 and V3 are trained and evaluated (target: from about Nov 25; it is cut first if the schedule slips). It is an application of the same question, not a new project: picking "the cream cheese" among five ingredients and putting it in the bowl is the grounding problem this project studies. RL was considered and rejected (millions of simulation steps and reward tuning; neither the deadline nor the GPU quota allows it). Everything is imitation learning, like V1–V3.
 
-**Scene:** LIBERO-Object, the "salad dressing" scene (`pick_up_the_salad_dressing_and_place_it_in_the_basket`). It contains the basket and six items; the five "ingredients" are salad dressing, ketchup, tomato sauce, cream cheese and alphabet soup (milk stays as a distractor). Every LIBERO-Object task is "pick up the X and place it in the basket" with recorded demos, and `smolvla_libero` was trained on all ten.
+**Scene (custom BDDL, kitchen table).** One `white_bowl` and five ingredients from LIBERO's assets: `salad_dressing`, `butter`, `cream_cheese`, `ketchup`, `tomato_sauce`. Ingredient positions are randomized per episode within table regions, so the policy must find each one rather than memorize where it is.
+
+**Skills, not combinations.** Five orders of one item, two items and so on would give 31 subsets (and more with orderings), which a few hundred demos cannot cover, and long multi-step tasks are SmolVLA's weak spot (smolvla_libero: 30% on T6, a two-step task). So the policy learns five single skills, "put the <ingredient> in the bowl", and the order is a sequence of them.
 
 **Steps:**
-1. **Feasibility check (half a day).** In that scene, run `smolvla_libero` with "pick up the X and place it in the basket" for each of the 5 items, 10 rollouts each (`run_sim --task libero_object:<id>` plus a prompt override). Only the salad dressing is that scene's trained target; the others were trained as targets in other layouts, so success may be lower.
-2. **If needed, fine-tune (one A100 run).** Build a LIBERO-Object dataset with the existing pipeline (`replay_demos`, `convert_to_lerobot`) and fine-tune from `smolvla_libero`, so every item is learned as a target in varied layouts.
-3. **Order parser (`groundedvla/demo/orders.py`).** Split the prompt into ingredient mentions (synonyms: "dressing", "tomato", "cheese", "soup", ...), ignore items not in the scene with a message, drop duplicates, keep the order the user gave. Unit tests.
-4. **Demo "order mode".** A sequence of sub-tasks, each with its trained instruction and its own goal check (`In(<item>, basket)`); a checklist on the page shows done / failed per item; continue to the next item when one fails. Works in both the laptop demo and the Gradio page.
-5. **Optional:** V3's grounding for the item positions, which helps most when the ordered item is not where it was during training.
+1. **Scene + check (0.5 day).** Write the BDDL, check that every object loads, settles and can be grasped, and that the goal `In(<ingredient>, white_bowl_contain_region)` evaluates.
+2. **Scripted demonstrations (1.5 days).** A scripted controller with privileged simulator state (object poses): move above the item, descend, grasp, lift, move above the bowl, release, with small random variations so the demos are not identical. Per-object grasp offsets (bottles vs. boxes). Keep only successful episodes: about 40 per ingredient, 200 total, recorded overnight in the same HDF5 format as LIBERO's demos.
+3. **Dataset + training (1 day + one GPU run).** The existing pipeline as is: `replay_demos`, masks and 3D grounding, `make_split_manifest`, `convert_to_lerobot`, then fine-tune from smolvla_libero (V1, and V3 if its adapter is ready).
+4. **Order parser (0.5 day, `groundedvla/demo/orders.py`).** Free-form order to an ingredient list: synonyms ("dressing", "ketchup", "tomato", "cheese", "butter"), "everything" / "all five", "no X" / "without X", duplicates removed, the user's order kept, items not in the scene reported. Unit tests.
+5. **Order mode in the demo (0.5 day).** Runs the skills one after another, each with its own goal check; a checklist shows done or failed per ingredient and moves on when one fails. In the laptop demo and the Gradio page.
+6. **Small evaluation (0.5 day).** 20 rollouts per single skill (in-distribution and shifted ingredient positions, V1 vs. V3 if both are trained), plus 10 random three-item orders end to end.
 
-**Done when:** a 3-item order succeeds end to end in at least 3 out of 5 tries, with a recorded video for the presentation.
+**Done when:** a three-item order succeeds end to end in at least 3 out of 5 tries, with a recorded video for the presentation.
 
-**Precision (Nov 15).** `train.precision: bf16` means bf16 autocast on GPUs with native bf16 (A100, L4), and fp16 autocast with loss scaling and fp32 master weights on older GPUs (T4), where bf16 is only emulated. Checked: from smolvla_libero both give the same starting losses (train ≈ 0.09–0.10, val 0.16–0.17). The GPU and precision of every run are recorded in its log; if variants end up trained on different GPUs, the report says so.
+**Risks:** scripted grasps may fail on some objects (fallback: drop that ingredient or use LIBERO-Object's basket scene, where demos already exist); the bowl may be too small for two upright bottles (fallback: a larger `basket` as the "salad bowl").
