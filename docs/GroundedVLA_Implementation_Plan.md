@@ -714,6 +714,21 @@ Done when:
 - With adapter output forced to zero, V3 produces identical actions to V2 on the same inputs.
 - One training batch runs forward and backward with gradients reaching the adapter.
 
+**Status (Nov 15): done.** `scripts/smoke_test_b2.py` checks the three "done when" items and passes:
+- With grounding disabled, V3 reproduces plain SmolVLA's actions (V2 inputs, same weights and noise): max difference 3.6e-7 in fp32. In bf16 the two masked tokens change the matrix shapes, so rounding differs (0.35); the masking itself is exact.
+- One V3 training step sends gradient to the adapter (last-layer gradient norm 3.5; at step 0 only the last layer gets gradient because it starts at zero). The adapter has its own learning rate (`grounding.adapter_lr`) and 1.4M parameters.
+- Once the adapter is non-zero, the grounding tokens change the actions.
+- End to end: tiny V2 and V3 runs trained with `train.py`, saved, reloaded by `run_sim` and driven in T1 with the mask and grounding coming from the simulator.
+
+Implementation:
+- `LiberoWrapper` (with depth/segmentation) adds `observation.images.mask` and the raw 16-D `grounding.raw` to every observation, computed exactly as `replay_demos.py` did for the dataset. `set_grounding_objects` points them at another goal of the same scene; the demo does this when a prompt maps to another kitchen skill.
+- `SmolVLARunner` reads the checkpoint's `train_config.yaml`. V2 gets the mask as a third camera; V3 gets the mask plus the grounding, normalized with the checkpoint's `grounding_norm.json`, through `GroundedSmolVLAPolicy`. `run_eval` and `run_sim` turn segmentation on whenever the model needs it.
+- `GroundedSmolVLAPolicy` builds the VLM once and loads smolvla_libero with the adapter at its zero start.
+- Step B5's noisy grounding is ready: `runner.grounding_noise_m` adds Gaussian noise to the target and destination centroids (derived entries recomputed), reproducible per episode.
+- Latency: V3 costs the same as V2 per policy call (measured on the laptop, grounding on and off); the perception time is logged separately as `grounding_ms`.
+
+Observation: V2 and V3 start from a higher validation loss than V1 (0.27–0.29 vs 0.13 at step 0), because the mask is a camera smolvla_libero never saw. Training should absorb this; compare the curves after B3.
+
 ### Step B3: Fine-Tune V2 and V3
 
 - Exact same hyperparameters, data, manifest, steps, seeds, checkpoint selection, and execution horizon as Step B1.

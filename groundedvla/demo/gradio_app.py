@@ -122,7 +122,7 @@ class GradioDemo:
                         playback = gr.Checkbox(a.playback, label="Smooth playback")
                         interpret = gr.Checkbox(True, label="Map my words to a trained skill")
                     status = gr.HTML(status_html(self.demo.snapshot()))
-                    gr.Markdown("**What the model sees** (agentview | wrist)")
+                    gr.Markdown("**What the model sees** (agentview | wrist | mask for V2/V3)")
                     inputs_img = gr.HTML(img_html(None))
                     with gr.Accordion("Log", open=False):
                         log = gr.Textbox(lines=10, max_lines=14, show_label=False, interactive=False)

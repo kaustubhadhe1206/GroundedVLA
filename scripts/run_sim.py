@@ -80,7 +80,8 @@ def main():
 
     perturbed = args.camera_yaw or args.camera_height or args.camera_fov_scale != 1.0
     camera = CameraPerturbation(args.camera_yaw, args.camera_height, args.camera_fov_scale) if perturbed else None
-    env = LiberoWrapper(task, with_depth_seg=False, seed=args.seed, camera_perturbation=camera)
+    env = LiberoWrapper(task, with_depth_seg=getattr(policy, "needs_depth_seg", False), seed=args.seed,
+                        camera_perturbation=camera)
     print(f"[run_sim] instruction: {env.instruction!r}")
     init_states = env.init_states()
     executor = ChunkExecutor(args.mode, horizon, args.te_m)

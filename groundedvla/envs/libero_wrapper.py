@@ -5,6 +5,15 @@ degrees *here and only here* so every downstream module sees upright images.
 
 IMPORTANT: when flipping images, pixel coordinates no longer match the MuJoCo camera model.
 grounding.py therefore works on the *unflipped* arrays kept in `obs["raw"]`.
+
+With depth/segmentation on (V2/V3), every observation also carries the inputs those models were
+trained on, computed exactly as replay_demos.py did for the dataset:
+  observation.images.mask   R = target, G = destination (upright, like the RGB images)
+  grounding.raw             16-D grounding vector, unnormalized (the policy normalizes it with the
+                            checkpoint's grounding_norm.json)
+  perception_ms             time spent on both
+By default they follow the task's own BDDL goal; `set_grounding_objects` points them elsewhere
+(the demo does this when a prompt is mapped to another skill of the same scene).
 """
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -43,6 +52,8 @@ class LiberoWrapper:
     camera_perturbation: CameraPerturbation | None = None
     seed: int = 0
     goal: TaskGoal = field(init=False)
+    grounding_objects: tuple[str, str] | None = field(init=False, default=None)   # (target, destination)
+    _tracker: object = field(init=False, default=None, repr=False)
 
     def __post_init__(self):
         from libero.libero import get_libero_path
@@ -88,6 +99,7 @@ class LiberoWrapper:
     def reset(self, init_state: np.ndarray | None = None, settle: bool = True) -> dict:
         """settle=False for expert replay, whose recorded actions start at the init state."""
         raw = self.env.reset()
+        self._tracker = None              # a new episode: forget the last visible centroids
         if self.camera_perturbation is not None:
             self.apply_camera_perturbation(self.camera_perturbation)
             raw = self._render_obs()  # reset() rendered with the original camera
@@ -119,7 +131,33 @@ class LiberoWrapper:
         if self.with_depth_seg:
             obs["depth.agentview"] = flip(raw["agentview_depth"])
             obs["seg.agentview"] = flip(raw["agentview_segmentation_instance"])
+            self._add_grounding(obs, raw)
         return obs
+
+    # ---------------- V2/V3 inputs ----------------
+    def set_grounding_objects(self, target: str | None = None, destination: str | None = None) -> None:
+        """Mask and grounding for these BDDL objects from now on (None = the task's own goal)."""
+        objs = (target or self.goal.target, destination or self.goal.destination_object)
+        if objs != self.grounding_objects:
+            self.grounding_objects = objs
+            self._tracker = None
+
+    def _add_grounding(self, obs: dict, raw: dict) -> None:
+        import time
+
+        from groundedvla.grounding.grounding import GroundingTracker
+        from groundedvla.grounding.masks import instance_id_map, mask_image
+
+        t0 = time.perf_counter()
+        if self.grounding_objects is None:
+            self.grounding_objects = (self.goal.target, self.goal.destination_object)
+        if self._tracker is None:
+            ids = instance_id_map(self.robosuite_env)
+            self._tracker = GroundingTracker(*(ids[n] for n in self.grounding_objects))
+        tr = self._tracker
+        obs["observation.images.mask"] = mask_image(obs["seg.agentview"], tr.target_id, tr.dest_id)
+        obs["grounding.raw"] = tr(self.sim, raw, normalize=False)
+        obs["perception_ms"] = (time.perf_counter() - t0) * 1e3
 
     def action_from_policy(self, a: np.ndarray) -> np.ndarray:
         """Policy 7-D output -> LIBERO action: clip to [-1, 1], binarize the gripper (+1 = close)."""

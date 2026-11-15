@@ -125,7 +125,7 @@ def main():
             log = out_dir / f"{task_key}_{cond_name}.jsonl"
             finished = done_episodes(log)
             pert = CameraPerturbation(**cond["camera"]) if "camera" in cond else None
-            env = LiberoWrapper(spec, with_depth_seg=cfg["model"]["variant"] != "v1", camera_perturbation=pert)
+            env = LiberoWrapper(spec, with_depth_seg=getattr(policy, "needs_depth_seg", False), camera_perturbation=pert)
             if "init_states" in cond:
                 raise NotImplementedError("loading OOD initial states from the manifest (Week 3)")
             init_states = env.init_states() if args.split == "test" else val_init_states(manifest, task_key, paths)

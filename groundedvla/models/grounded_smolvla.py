@@ -1,16 +1,22 @@
 """SmolVLA with grounding tokens appended right after the state token (Step B2, V3).
 
-Written against lerobot==0.4.4 where the prefix is built by
-`VLAFlowMatching.embed_prefix(images, img_masks, lang_tokens, lang_masks, state)` and padded
-to `config.prefix_length` at the end. We build the unpadded prefix, append K grounding tokens
-with the same attention treatment as the state token (att_mask=1), then pad.
+Written against lerobot==0.4.4, where the prefix is built by
+`VLAFlowMatching.embed_prefix(images, img_masks, lang_tokens, lang_masks, state)` and padded to
+`config.prefix_length` at the end. We build the unpadded prefix, append K grounding tokens with the
+same attention treatment as the state token (att_mask = 1: image and language tokens can't see
+them, the action expert can), then pad.
 
-Identity check (B2 "done when"): with `grounding_enabled=False` the grounding tokens get
-pad_mask=False, so they are not attended to and do not advance position ids -> V3 == V2
-exactly. Note a zero-valued token that is still attended is *not* an identity (it takes
-softmax mass and shifts RoPE positions), so test with the flag, not just the zero init.
+Identity check (B2 "done when"): with `grounding_enabled = False` the grounding tokens get
+pad_mask = False, so nothing attends to them and they don't advance position ids, and V3 gives
+exactly V2's actions. A zero-valued token that is still attended is *not* an identity (it takes
+softmax mass and shifts RoPE positions), so the check uses the flag, not just the zero init.
+
+Loading: `GroundedSmolVLAPolicy.from_pretrained(smolvla_libero dir, config=..., num_grounding_tokens=K)`
+loads every SmolVLA weight (LeRobot loads with strict=False) and leaves the new adapter at its zero
+init, so training starts exactly from the V2 behaviour. Our checkpoints contain the adapter too.
 """
 import torch
+from lerobot.policies.pretrained import PreTrainedPolicy
 from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy, VLAFlowMatching, pad_tensor
 
 from groundedvla.models.grounding_adapter import GroundingAdapter
@@ -19,10 +25,12 @@ GROUNDING_KEY = "observation.grounding"
 
 
 class GroundedFlowMatching(VLAFlowMatching):
-    def __init__(self, config, num_grounding_tokens: int = 2, **kwargs):
+    def __init__(self, config, num_grounding_tokens: int = 2, fourier_freqs: int = 8, mlp_width: int = 512,
+                 **kwargs):
         super().__init__(config, **kwargs)
         hidden = self.vlm_with_expert.config.text_config.hidden_size
-        self.grounding_adapter = GroundingAdapter(hidden, num_tokens=num_grounding_tokens)
+        self.grounding_adapter = GroundingAdapter(hidden, num_tokens=num_grounding_tokens,
+                                                  num_freqs=fourier_freqs, width=mlp_width)
         self.grounding_enabled = True
         self._grounding: torch.Tensor | None = None  # set by the policy before each call
 
@@ -34,7 +42,8 @@ class GroundedFlowMatching(VLAFlowMatching):
             self.prefix_length = prefix_length
 
         if self._grounding is not None:
-            g_tok = self.grounding_adapter(self._grounding.to(embs.dtype)).to(embs.dtype)
+            g = self._grounding.to(device=embs.device, dtype=next(self.grounding_adapter.parameters()).dtype)
+            g_tok = self.grounding_adapter(g).to(embs.dtype)
             bsize, k = g_tok.shape[:2]
             g_pad = torch.full((bsize, k), self.grounding_enabled, dtype=torch.bool, device=embs.device)
             g_att = torch.ones((bsize, k), dtype=torch.bool, device=embs.device)  # same as state token
@@ -50,14 +59,27 @@ class GroundedFlowMatching(VLAFlowMatching):
 
 
 class GroundedSmolVLAPolicy(SmolVLAPolicy):
-    """Routes `observation.grounding` from the batch into the flow-matching model."""
+    """Routes `observation.grounding` (normalized, (B, 16)) from the batch into the model."""
 
-    def __init__(self, config, num_grounding_tokens: int = 2, **kwargs):
-        super().__init__(config, **kwargs)
-        # TODO(B2): this builds the VLM twice (parent init + here). Fine for a smoke test;
-        # avoid it before training on Colab to save load time and memory.
+    def __init__(self, config, num_grounding_tokens: int = 2, fourier_freqs: int = 8, mlp_width: int = 512,
+                 **kwargs):
+        # SmolVLAPolicy.__init__ without its VLAFlowMatching, so the VLM is built once (lerobot 0.4.4)
+        PreTrainedPolicy.__init__(self, config)
+        config.validate_features()
+        self.config = config
+        self.init_rtc_processor()
         self.model = GroundedFlowMatching(config, num_grounding_tokens=num_grounding_tokens,
+                                          fourier_freqs=fourier_freqs, mlp_width=mlp_width,
                                           rtc_processor=self.rtc_processor)
+        self.reset()
+
+    @property
+    def grounding_enabled(self) -> bool:
+        return self.model.grounding_enabled
+
+    @grounding_enabled.setter
+    def grounding_enabled(self, on: bool) -> None:
+        self.model.grounding_enabled = bool(on)
 
     def _set_grounding(self, batch):
         self.model._grounding = batch.get(GROUNDING_KEY)
@@ -70,6 +92,5 @@ class GroundedSmolVLAPolicy(SmolVLAPolicy):
         self._set_grounding(batch)
         return super()._get_action_chunk(batch, noise, **kwargs)
 
-    def get_optim_params(self):
-        # Backbone frozen by config flags; adapter always trainable.
-        return [p for p in self.parameters() if p.requires_grad]
+    def adapter_parameters(self) -> list[torch.nn.Parameter]:
+        return list(self.model.grounding_adapter.parameters())

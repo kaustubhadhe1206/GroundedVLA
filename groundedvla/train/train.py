@@ -152,7 +152,34 @@ def policy_class(variant: str):
         from lerobot.policies.smolvla.modeling_smolvla import SmolVLAPolicy
 
         return SmolVLAPolicy
-    raise NotImplementedError("V3 training is wired up in Step B2 (grounded_smolvla.py)")
+    if variant == "v3":
+        from groundedvla.models.grounded_smolvla import GroundedSmolVLAPolicy
+
+        return GroundedSmolVLAPolicy
+    raise ValueError(f"unknown model.variant {variant!r}")
+
+
+def policy_kwargs(cfg: dict) -> dict:
+    """Constructor arguments beyond the LeRobot config (V3: the grounding adapter's size)."""
+    m = cfg["model"]
+    if not m.get("use_grounding"):
+        return {}
+    g = m.get("grounding", {})
+    if g.get("injection", "tokens") != "tokens":
+        raise NotImplementedError(f"grounding.injection={g['injection']!r}: only 'tokens' is implemented")
+    return {"num_grounding_tokens": g.get("num_tokens", 2), "fourier_freqs": g.get("fourier_freqs", 8),
+            "mlp_width": g.get("mlp_width", 512)}
+
+
+def param_groups(policy, cfg: dict, lr: float) -> list[dict]:
+    """Trainable parameters; V3's adapter gets `grounding.adapter_lr` (default: the same lr)."""
+    adapter = list(policy.adapter_parameters()) if hasattr(policy, "adapter_parameters") else []
+    ids = {id(p) for p in adapter}
+    rest = [p for p in policy.parameters() if p.requires_grad and id(p) not in ids]
+    groups = [{"params": rest, "lr": lr}]
+    if adapter:
+        groups.append({"params": adapter, "lr": cfg["model"].get("grounding", {}).get("adapter_lr", lr)})
+    return groups
 
 
 # ----------------------------------------------------------------------------- augmentation
@@ -326,7 +353,7 @@ def main():
     resume_from = None if args.no_resume else latest_resumable(run_dir)
     pc = make_policy_config(cfg, base, train_ds.meta, device)
     cls = policy_class(cfg["model"]["variant"])
-    policy = cls.from_pretrained(str(resume_from or base), config=pc).to(device)
+    policy = cls.from_pretrained(str(resume_from or base), config=pc, **policy_kwargs(cfg)).to(device)
     policy.train()
     pre, post = make_pre_post_processors(pc, dataset_stats=normalization_stats(train_ds.meta.stats, init_name, base))
 
@@ -334,11 +361,14 @@ def main():
         # SmolVLA keeps its weights in bf16, which fp16 loss scaling can't handle (and older GPUs only
         # emulate): keep fp32 master weights and let autocast run the math in fp16
         policy.float()
-    params = [p for p in policy.parameters() if p.requires_grad]
-    n_train, n_all = sum(p.numel() for p in params), sum(p.numel() for p in policy.parameters())
-    print(f"[train] trainable params {n_train / 1e6:.1f}M of {n_all / 1e6:.1f}M")
     opt_cfg = pc.get_optimizer_preset()
-    optimizer = torch.optim.AdamW(params, lr=opt_cfg.lr, betas=opt_cfg.betas, eps=opt_cfg.eps,
+    groups = param_groups(policy, cfg, opt_cfg.lr)
+    params = [p for g in groups for p in g["params"]]
+    n_train, n_all = sum(p.numel() for p in params), sum(p.numel() for p in policy.parameters())
+    print(f"[train] trainable params {n_train / 1e6:.1f}M of {n_all / 1e6:.1f}M"
+          + (f" (grounding adapter {sum(p.numel() for p in groups[1]['params']) / 1e6:.2f}M, "
+             f"lr {groups[1]['lr']:.1e})" if len(groups) > 1 else ""))
+    optimizer = torch.optim.AdamW(groups, lr=opt_cfg.lr, betas=opt_cfg.betas, eps=opt_cfg.eps,
                                   weight_decay=opt_cfg.weight_decay)
     scheduler = pc.get_scheduler_preset().build(optimizer, total_steps)
     scaler = torch.amp.GradScaler("cuda", enabled=amp_dtype is torch.float16)

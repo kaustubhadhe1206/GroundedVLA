@@ -92,6 +92,19 @@ def task_instruction(task_key: str) -> str:
 
 
 @lru_cache(maxsize=None)
+def goal_objects(task_key: str) -> tuple[str, str]:
+    """(target, destination) BDDL object names of a task's goal: what V2's mask and V3's grounding
+    must point at when the demo runs that skill."""
+    from libero.libero import get_libero_path
+
+    from groundedvla.data.bddl_parser import parse_bddl
+
+    t = TASKS[task_key]
+    g = parse_bddl(Path(get_libero_path("bddl_files")) / t.suite / f"{t.bddl_name}.bddl")
+    return g.target, g.destination_object
+
+
+@lru_cache(maxsize=None)
 def goal_state(task_key: str) -> list:
     """The task's BDDL goal as LIBERO's predicate lists, evaluable in any env of the same scene."""
     from libero.libero import get_libero_path

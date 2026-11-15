@@ -40,7 +40,8 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 import groundedvla.envs.compat  # noqa: F401  (must precede LIBERO / robosuite imports)
-from groundedvla.demo.skills import goal_state, match_prompt, phrasings, skills_in_scene, task_instruction
+from groundedvla.demo.skills import (goal_objects, goal_state, match_prompt, phrasings, skills_in_scene,
+                                     task_instruction)
 from groundedvla.envs.libero_wrapper import CameraPerturbation, LiberoWrapper
 from groundedvla.policies.chunking import MODES, ChunkExecutor
 from groundedvla.policies.registry import build_policy, default_horizon, load_registry
@@ -185,8 +186,10 @@ class Demo:
         main = self.frames.put("main", self.render_main())
         inputs = None
         if self.obs is not None:
-            inputs = self.frames.put("inputs", np.concatenate(
-                [self.obs["observation.images.image"], self.obs["observation.images.image2"]], 1))
+            views = [self.obs["observation.images.image"], self.obs["observation.images.image2"]]
+            if "observation.images.mask" in self.obs:            # V2/V3 also see the mask
+                views.append(self.obs["observation.images.mask"])
+            inputs = self.frames.put("inputs", np.concatenate(views, 1))
         return main, inputs
 
     def play(self, frames: list[tuple[bytes, bytes | None]], label: str) -> bool:
@@ -325,6 +328,7 @@ class Demo:
                 self.load_scene(self.state["task"], self.state["init"], quiet=True)
                 self.update(status="running", match=match)
             self.active_goal = goal_state(goal_key) if goal_key else None
+            self.point_grounding(goal_key)
             self.update(running_agent=agent.label)
             recs.append(self.run_agent(agent, policy_prompt, live))
             if recs[-1].outcome == "stopped":
@@ -339,6 +343,18 @@ class Demo:
             self.play(frames, " vs ".join(f"{r.label}: {r.outcome}" for r in recs))
         summary = "; ".join(f"{r.label}: {r.outcome} after {r.steps} steps" for r in recs)
         self.update(status="idle", message=f"{summary}. Type another prompt, Replay, or Reset.")
+
+    def point_grounding(self, goal_key: str | None) -> None:
+        """V2/V3: mask and grounding follow the skill being run (another goal of the same scene),
+        or the scene's own goal for an unmatched prompt. Re-renders the current state so the first
+        policy call already sees the new mask."""
+        if self.env is None or not self.env.with_depth_seg:
+            return
+        target, dest = goal_objects(goal_key) if goal_key else (None, None)
+        if (target, dest) != (None, None) and target not in self.env.scene_objects():
+            target, dest = None, None                    # skill names an object this scene lacks
+        self.env.set_grounding_objects(target, dest)
+        self.obs = self.env.format_obs(self.env._render_obs())
 
     def interpret(self, prompt: str) -> tuple[str, str | None, dict | None]:
         """(text for the policy, task whose goal is checked, match info for the page).
