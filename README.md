@@ -43,7 +43,7 @@ OpenVLA-7B needs about 16 GB of GPU memory and its own environment, so run it on
 
 ```powershell
 .\demo smolvla_libero --task T1
-.\demo smolvla_ckpt --checkpoint D:\groundedvla\checkpoints\v1_rgb\step_020000 --horizon 10 --task T3
+.\demo smolvla_ckpt --checkpoint D:\groundedvla\checkpoints\v1_rgb\step_010000 --horizon 10 --task T3
 # two models side by side on the identical scene (e.g. V1 vs V3 with the camera rotated)
 .\demo smolvla_ckpt --checkpoint <v1 step dir> --label V1 --compare smolvla_ckpt --compare-checkpoint <v3 step dir> --compare-label V3
 ```

@@ -12,7 +12,7 @@ Checkpoints (plan Section 2.7), written to <checkpoints>/<run>/step_XXXXXX/:
   training_state.pt   optimizer, scheduler, RNG states, step, W&B id, commit (latest 2 only)
   grounding_norm.json, train_config.yaml
 Each one is written to a temporary folder and renamed, so a disconnect can't leave a half-written
-checkpoint. Kept: the 2 newest, the selection steps (10k/15k/20k) and the lowest-val-loss one.
+checkpoint. Kept: the 2 newest, the selection steps (`select_from_steps`, 6k/8k/10k) and the lowest-val-loss one.
 Starting again with the same config resumes from the newest checkpoint automatically.
 
 Usage:

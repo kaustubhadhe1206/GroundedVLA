@@ -933,6 +933,8 @@ All variants (V1, V1-aug, V2, V3) now start from `HuggingFaceVLA/smolvla_libero`
 - **Caveat for the report:** smolvla_libero was trained on all LIBERO demonstrations, including those of our tasks, so in-distribution numbers mostly reflect that pretraining; the claims rest on the out-of-distribution conditions and on the paired V1-vs-V3 comparisons.
 - `init_from: smolvla_base` still works, for an ablation if time allows.
 
+**Training length (Nov 15).** Every variant now trains for 10k steps instead of 20k (warmup 1k, cosine over 10k), with checkpoint selection at 6k / 8k / 10k. Reasons: training starts from smolvla_libero, whose loss on our data is already low (val ≈ 0.13 at step 0 vs 0.82 from smolvla_base), and 10k steps at batch 32 is already ~9 passes over the 34k training frames, so more steps mainly risk overfitting; and the GPU budget (Colab compute units) is limited. The budget is the same for every variant. If V3's grounding adapter, which starts from zero, is still improving at 10k (curves and the 6k/8k/10k selection show this), extend that question with the A100 time saved.
+
 **Precision (Nov 15).** `train.precision: bf16` means bf16 autocast on GPUs with native bf16 (A100, L4), and fp16 autocast with loss scaling and fp32 master weights on older GPUs (T4), where bf16 is only emulated. Checked: from smolvla_libero both give the same starting losses (train ≈ 0.09–0.10, val 0.16–0.17). The GPU and precision of every run are recorded in its log; if variants end up trained on different GPUs, the report says so.
 
 ## 15. After V1–V3: Salad Bowl Application (planned Nov 15)
