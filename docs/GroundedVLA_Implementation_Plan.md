@@ -949,3 +949,5 @@ Only after V1/V2/V3 are trained and evaluated (target: Week 4, about 2–3 days 
 5. **Optional:** V3's grounding for the item positions, which helps most when the ordered item is not where it was during training.
 
 **Done when:** a 3-item order succeeds end to end in at least 3 out of 5 tries, with a recorded video for the presentation.
+
+**Precision (Nov 15).** `train.precision: bf16` means bf16 autocast on GPUs with native bf16 (A100, L4), and fp16 autocast with loss scaling and fp32 master weights on older GPUs (T4), where bf16 is only emulated. Checked: from smolvla_libero both give the same starting losses (train ≈ 0.09–0.10, val 0.16–0.17). The GPU and precision of every run are recorded in its log; if variants end up trained on different GPUs, the report says so.

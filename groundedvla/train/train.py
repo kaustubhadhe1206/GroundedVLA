@@ -80,6 +80,16 @@ def infinite_loader(ds, batch_size: int, num_workers: int, seed: int, start_epoc
 
 
 # ----------------------------------------------------------------------------- policy
+def mixed_precision(precision: str | None, device: str):
+    """Autocast dtype: bf16 on GPUs with native bf16 (A100, L4), fp16 + loss scaling on older ones (T4,
+    V100), where bf16 is only emulated and very slow. None = full fp32."""
+    if precision not in ("bf16", "fp16") or device != "cuda":
+        return None
+    if precision == "bf16" and torch.cuda.get_device_capability()[0] >= 8:
+        return torch.bfloat16
+    return torch.float16
+
+
 INIT_CHOICES = ("smolvla_base", "smolvla_libero")
 
 
@@ -247,7 +257,7 @@ def prune_checkpoints(run_dir: Path, keep_steps: set[int], best_step: int | None
 
 # ----------------------------------------------------------------------------- loop
 @torch.no_grad()
-def validation_loss(policy, pre, val_ds, batch_size: int, max_batches: int, num_workers: int, use_bf16: bool) -> float:
+def validation_loss(policy, pre, val_ds, batch_size: int, max_batches: int, num_workers: int, amp_dtype) -> float:
     """Deterministic flow-matching loss on the val demos (fixed noise/time seed, own RNG)."""
     policy.eval()
     loader = torch.utils.data.DataLoader(val_ds, batch_size=batch_size, shuffle=False, num_workers=num_workers)
@@ -258,7 +268,7 @@ def validation_loss(policy, pre, val_ds, batch_size: int, max_batches: int, num_
         for i, batch in enumerate(loader):
             if i == max_batches:
                 break
-            with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
+            with torch.autocast("cuda", dtype=amp_dtype or torch.float32, enabled=amp_dtype is not None):
                 loss, _ = policy.forward(pre(batch))
             losses.append(float(loss))
     policy.train()
@@ -290,7 +300,7 @@ def main():
         t["seed"] = args.seed               # saved into every checkpoint's train_config.yaml
     paths = load_paths()
     device = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
-    use_bf16 = t.get("precision") == "bf16" and device == "cuda" and torch.cuda.is_bf16_supported()
+    amp_dtype = mixed_precision(t.get("precision"), device)
     batch_size = args.batch_size or t["batch_size"]
     num_workers = t.get("num_workers", 8) if args.num_workers is None else args.num_workers
     total_steps = t["steps"]
@@ -307,7 +317,7 @@ def main():
     commit = commit_hash()
     ds_root = dataset_root(cfg["data"]["repo_id"], paths)
     train_ds, val_ds = make_datasets(cfg, ds_root, args.video_backend)
-    print(f"[train] run={run_name} commit={commit} device={device} bf16={use_bf16} batch={batch_size}")
+    print(f"[train] run={run_name} commit={commit} device={device} amp={str(amp_dtype).replace('torch.', '')} batch={batch_size}")
     print(f"[train] dataset {ds_root}: train {train_ds.num_episodes} episodes / {train_ds.num_frames} frames, "
           f"val {val_ds.num_episodes} / {val_ds.num_frames}")
 
@@ -320,6 +330,10 @@ def main():
     policy.train()
     pre, post = make_pre_post_processors(pc, dataset_stats=normalization_stats(train_ds.meta.stats, init_name, base))
 
+    if amp_dtype is torch.float16:
+        # SmolVLA keeps its weights in bf16, which fp16 loss scaling can't handle (and older GPUs only
+        # emulate): keep fp32 master weights and let autocast run the math in fp16
+        policy.float()
     params = [p for p in policy.parameters() if p.requires_grad]
     n_train, n_all = sum(p.numel() for p in params), sum(p.numel() for p in policy.parameters())
     print(f"[train] trainable params {n_train / 1e6:.1f}M of {n_all / 1e6:.1f}M")
@@ -327,6 +341,7 @@ def main():
     optimizer = torch.optim.AdamW(params, lr=opt_cfg.lr, betas=opt_cfg.betas, eps=opt_cfg.eps,
                                   weight_decay=opt_cfg.weight_decay)
     scheduler = pc.get_scheduler_preset().build(optimizer, total_steps)
+    scaler = torch.amp.GradScaler("cuda", enabled=amp_dtype is torch.float16)
 
     step, wandb_id, best = 0, None, {"val_loss": float("inf"), "step": None}
     run_state_path = run_dir / RUN_STATE
@@ -374,15 +389,18 @@ def main():
         batch = pre(batch)
         if augment is not None:
             batch = augment(batch)
-        with torch.autocast("cuda", dtype=torch.bfloat16, enabled=use_bf16):
+        with torch.autocast("cuda", dtype=amp_dtype or torch.float32, enabled=amp_dtype is not None):
             loss, _ = policy.forward(batch)
-        loss.backward()
+        scaler.scale(loss).backward()           # the scaler is a no-op except for fp16 (T4)
+        scaler.unscale_(optimizer)
         grad_norm = torch.nn.utils.clip_grad_norm_(params, grad_clip)
-        optimizer.step()
+        scaler.step(optimizer)                  # fp16: skipped if the gradients overflowed
+        scaler.update()
         optimizer.zero_grad(set_to_none=True)
         scheduler.step()
         step += 1
-        loss_acc, gn_acc, n_acc = loss_acc + loss.item(), gn_acc + grad_norm.item(), n_acc + 1
+        gn = grad_norm.item()
+        loss_acc, gn_acc, n_acc = loss_acc + loss.item(), gn_acc + (gn if np.isfinite(gn) else 0.0), n_acc + 1
 
         if step % log_every == 0 or step == stop_step:
             now = time.perf_counter()
@@ -398,7 +416,7 @@ def main():
             t_last, loss_acc, gn_acc, n_acc, data_s = now, 0.0, 0.0, 0, 0.0
 
         if step % val_every == 0 or step == stop_step:
-            vl = validation_loss(policy, pre, val_ds, batch_size, t.get("val_batches", 25), num_workers, use_bf16)
+            vl = validation_loss(policy, pre, val_ds, batch_size, t.get("val_batches", 25), num_workers, amp_dtype)
             print(f"[train] step {step:6d} val_loss {vl:.4f}", flush=True)
             log({"step": step, "val_loss": vl})
             if vl < best["val_loss"] and step % ckpt_every == 0:
