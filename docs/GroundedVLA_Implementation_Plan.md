@@ -932,3 +932,20 @@ All variants (V1, V1-aug, V2, V3) now start from `HuggingFaceVLA/smolvla_libero`
 - **Normalization:** state/action mean and std are taken from smolvla_libero's own preprocessor, not from our dataset (ours differ: e.g. end-effector z std 0.10 vs 0.38), so at step 0 the model behaves exactly like smolvla_libero. Images are not normalized (identity), so the V2/V3 mask camera is unaffected.
 - **Caveat for the report:** smolvla_libero was trained on all LIBERO demonstrations, including those of our tasks, so in-distribution numbers mostly reflect that pretraining; the claims rest on the out-of-distribution conditions and on the paired V1-vs-V3 comparisons.
 - `init_from: smolvla_base` still works, for an ablation if time allows.
+
+## 15. Stretch Demo After V1–V3: "Salad Order" Mode (planned Nov 15)
+
+Only after V1/V2/V3 are trained and evaluated (target: Week 4, about 2–3 days of work). It is a demo feature, not part of the evaluation. RL was considered and rejected: learning language-conditioned pick-and-place from scratch needs millions of steps and reward tuning, which neither the deadline nor the A100 quota allows.
+
+**Idea:** the user types a free-form order ("I'd like ketchup, tomato sauce and some cream cheese"); the robot puts each ordered item into the basket, one at a time.
+
+**Scene:** LIBERO-Object, the "salad dressing" scene (`pick_up_the_salad_dressing_and_place_it_in_the_basket`). It contains the basket and six items; the five "ingredients" are salad dressing, ketchup, tomato sauce, cream cheese and alphabet soup (milk stays as a distractor). Every LIBERO-Object task is "pick up the X and place it in the basket" with recorded demos, and `smolvla_libero` was trained on all ten.
+
+**Steps:**
+1. **Feasibility check (half a day).** In that scene, run `smolvla_libero` with "pick up the X and place it in the basket" for each of the 5 items, 10 rollouts each (`run_sim --task libero_object:<id>` plus a prompt override). Only the salad dressing is that scene's trained target; the others were trained as targets in other layouts, so success may be lower.
+2. **If needed, fine-tune (one A100 run).** Build a LIBERO-Object dataset with the existing pipeline (`replay_demos`, `convert_to_lerobot`) and fine-tune from `smolvla_libero`, so every item is learned as a target in varied layouts.
+3. **Order parser (`groundedvla/demo/orders.py`).** Split the prompt into ingredient mentions (synonyms: "dressing", "tomato", "cheese", "soup", ...), ignore items not in the scene with a message, drop duplicates, keep the order the user gave. Unit tests.
+4. **Demo "order mode".** A sequence of sub-tasks, each with its trained instruction and its own goal check (`In(<item>, basket)`); a checklist on the page shows done / failed per item; continue to the next item when one fails. Works in both the laptop demo and the Gradio page.
+5. **Optional:** V3's grounding for the item positions, which helps most when the ordered item is not where it was during training.
+
+**Done when:** a 3-item order succeeds end to end in at least 3 out of 5 tries, with a recorded video for the presentation.
