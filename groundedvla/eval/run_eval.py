@@ -28,9 +28,19 @@ from groundedvla.tasks import TASKS
 from groundedvla.utils.paths import REPO_ROOT, load_paths
 
 
+VAL_STATES_FILE = REPO_ROOT / "groundedvla" / "data" / "val_init_states.npz"
+
+
 def val_init_states(manifest: dict, task_key: str, paths: dict) -> list[np.ndarray]:
-    """Initial states of the task's validation demos (split manifest), from the raw LIBERO hdf5."""
+    """Initial states of the task's validation demos (split manifest). Read from the small exported copy
+    in the repo (scripts/export_val_init_states.py) when it has the task, so Colab doesn't need the raw
+    LIBERO hdf5 files; otherwise from the raw hdf5."""
     d = manifest["demos"][task_key]
+    if VAL_STATES_FILE.exists():
+        with np.load(VAL_STATES_FILE) as z:
+            names = [f"{task_key}/{name}" for name in d["val"]]
+            if all(n in z for n in names):
+                return [z[n] for n in names]
     with h5py.File(Path(paths["libero_raw"]) / d["suite"] / f"{d['bddl_name']}_demo.hdf5") as f:
         return [f["data"][name]["states"][0] for name in d["val"]]
 
