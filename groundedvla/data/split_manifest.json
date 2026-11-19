@@ -426,6 +426,91 @@
   "val_rollouts_per_task": 10,
   "test_seed": 2000,
   "test_in_distribution": "libero_fixed_init_states",
-  "ood": {},
+  "ood": {
+    "distractor": {
+      "file": "groundedvla/data/ood_init_states.npz",
+      "seed": 3000,
+      "generator": "groundedvla/ood/make_ood_states.py",
+      "tasks": {
+        "T1": {
+          "n": 25,
+          "bddl": "groundedvla/ood/bddl/T1_distractor.bddl"
+        },
+        "T2": {
+          "n": 25,
+          "bddl": "groundedvla/ood/bddl/T2_distractor.bddl"
+        },
+        "T3": {
+          "n": 25,
+          "bddl": "groundedvla/ood/bddl/T3_distractor.bddl"
+        },
+        "T4": {
+          "n": 25,
+          "bddl": "groundedvla/ood/bddl/T4_distractor.bddl"
+        }
+      }
+    },
+    "layout_swap": {
+      "file": "groundedvla/data/ood_init_states.npz",
+      "seed": 3000,
+      "generator": "groundedvla/ood/make_ood_states.py",
+      "tasks": {
+        "T1": {
+          "n": 25,
+          "bddl": null
+        },
+        "T2": {
+          "n": 25,
+          "bddl": null
+        }
+      }
+    },
+    "pos_large": {
+      "file": "groundedvla/data/ood_init_states.npz",
+      "seed": 3000,
+      "generator": "groundedvla/ood/make_ood_states.py",
+      "tasks": {
+        "T1": {
+          "n": 50,
+          "bddl": null
+        },
+        "T2": {
+          "n": 50,
+          "bddl": null
+        },
+        "T3": {
+          "n": 50,
+          "bddl": null
+        },
+        "T4": {
+          "n": 50,
+          "bddl": null
+        }
+      }
+    },
+    "pos_small": {
+      "file": "groundedvla/data/ood_init_states.npz",
+      "seed": 3000,
+      "generator": "groundedvla/ood/make_ood_states.py",
+      "tasks": {
+        "T1": {
+          "n": 25,
+          "bddl": null
+        },
+        "T2": {
+          "n": 25,
+          "bddl": null
+        },
+        "T3": {
+          "n": 25,
+          "bddl": null
+        },
+        "T4": {
+          "n": 25,
+          "bddl": null
+        }
+      }
+    }
+  },
   "note": "Filled by make_split_manifest.py (A5) and ood/make_ood_states.py (Week 3). Do not edit by hand."
 }

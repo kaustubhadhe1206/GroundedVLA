@@ -45,6 +45,12 @@ def val_init_states(manifest: dict, task_key: str, paths: dict) -> list[np.ndarr
         return [f["data"][name]["states"][0] for name in d["val"]]
 
 
+def ood_init_states(manifest: dict, cond: str, task_key: str) -> np.ndarray:
+    """Position / scene OOD states of one condition and task (ood/make_ood_states.py, saved in the repo)."""
+    with np.load(REPO_ROOT / manifest["ood"][cond]["file"]) as z:
+        return z[f"{cond}/{task_key}"]
+
+
 def run_identity(cfg: dict, policy: str, checkpoint: str | None, name: str | None) -> dict:
     """What a record belongs to: `label` = variant config (pooled in reports), `run` = one training
     run of it (one seed). Read from the checkpoint's train_config.yaml when there is one.
@@ -121,9 +127,10 @@ def main():
                 continue
             if is_light and cond_name != "in_distribution" and cond_name not in light["conditions"]:
                 continue                                 # scope-extension task: lighter evaluation
-            if "init_states" in cond and cond["init_states"] not in manifest.get("ood", {}):
+            ood = manifest.get("ood", {}).get(cond.get("init_states"), {}).get("tasks", {}).get(task_key)
+            if "init_states" in cond and ood is None:
                 # never run these with the default states: they would be logged as OOD but be in-distribution
-                print(f"skip {task_key} {cond_name}: OOD initial states not generated yet (ood/make_ood_states.py)")
+                print(f"skip {task_key} {cond_name}: OOD initial states not generated (ood/make_ood_states.py)")
                 continue
             paraphrases = None
             if "paraphrases" in cond:
@@ -135,10 +142,15 @@ def main():
             log = out_dir / f"{task_key}_{cond_name}.jsonl"
             finished = done_episodes(log)
             pert = CameraPerturbation(**cond["camera"]) if "camera" in cond else None
-            env = LiberoWrapper(spec, with_depth_seg=getattr(policy, "needs_depth_seg", False), camera_perturbation=pert)
+            bddl = str(REPO_ROOT / ood["bddl"]) if ood and ood.get("bddl") else None   # distractor scene
+            env = LiberoWrapper(spec, with_depth_seg=getattr(policy, "needs_depth_seg", False), camera_perturbation=pert,
+                                bddl_file=bddl)
             if "init_states" in cond:
-                raise NotImplementedError("loading OOD initial states from the manifest (Week 3)")
-            init_states = env.init_states() if args.split == "test" else val_init_states(manifest, task_key, paths)
+                init_states = ood_init_states(manifest, cond["init_states"], task_key)
+            elif args.split == "test":
+                init_states = env.init_states()
+            else:
+                init_states = val_init_states(manifest, task_key, paths)
             default_n = cfg["eval"]["rollouts_per_task"] if args.split == "test" else manifest["val_rollouts_per_task"]
             n = args.episodes or cond.get("rollouts", default_n)
             if is_light and not args.episodes:

@@ -51,6 +51,7 @@ class LiberoWrapper:
     with_depth_seg: bool = True
     camera_perturbation: CameraPerturbation | None = None
     seed: int = 0
+    bddl_file: str | None = None      # scene override, e.g. the OOD distractor copy (ood/make_ood_states.py)
     goal: TaskGoal = field(init=False)
     grounding_objects: tuple[str, str] | None = field(init=False, default=None)   # (target, destination)
     _tracker: object = field(init=False, default=None, repr=False)
@@ -59,7 +60,7 @@ class LiberoWrapper:
         from libero.libero import get_libero_path
         from libero.libero.envs import OffScreenRenderEnv
 
-        bddl = Path(get_libero_path("bddl_files")) / self.task.suite / f"{self.task.bddl_name}.bddl"
+        bddl = Path(self.bddl_file or Path(get_libero_path("bddl_files")) / self.task.suite / f"{self.task.bddl_name}.bddl")
         self.goal = parse_bddl(bddl)
         kwargs = dict(bddl_file_name=str(bddl), camera_heights=IMG_SIZE, camera_widths=IMG_SIZE,
                       camera_names=list(CAMERAS))
